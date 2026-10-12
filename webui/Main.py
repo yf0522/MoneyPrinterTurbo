@@ -669,8 +669,10 @@ def _initialize_session_state():
     browser_locale = st.context.locale
     initial_ui_language = utils.resolve_ui_language(
         saved_language=saved_ui_language,
-        browser_locale=browser_locale,
+        # 默认使用简体中文：不再跟随浏览器语言，用户仍可在右上角手动切换。
+        browser_locale=None,
         supported_languages=locales.keys(),
+        default_language="zh",
     )
 
     defaults = {
@@ -4999,7 +5001,7 @@ def _render_script_settings(panel, params):
     """渲染文案设置并更新生成参数。"""
     with panel:
         with st.container(border=True):
-            _section_header(tr("Video Script Settings"), 1)
+            _section_header(tr("Video Script Settings"), 1, tr("Step Script Caption"))
             # 标签行需要容纳“配置大模型”入口，因此无法继续使用 text_area
             # 内置标签。把标签和输入框收进同一个字段容器后，可覆盖内部间距，
             # 同时让该字段与页面上的其它表单控件保持一致的外部节奏。
@@ -5033,16 +5035,22 @@ def _render_script_settings(panel, params):
             video_languages = [
                 (tr("Auto Detect"), ""),
             ]
+            language_names = {
+                "zh-CN": "简体中文（推荐）",
+                "zh-HK": "繁体中文（香港）",
+                "zh-TW": "繁体中文（台湾）",
+                "en-US": "English 英语",
+            }
             for code in support_locales:
-                video_languages.append((code, code))
+                video_languages.append((language_names.get(code, code), code))
 
             selected_language_code = stable_selectbox(
                 tr("Script Language"),
                 options=[value for _, value in video_languages],
                 default_value=_saved_ui_choice(
-                    "video_language",
+                    "script_language",
                     [value for _, value in video_languages],
-                    "",
+                    "zh-CN",
                 ),
                 key="script_language_select",
                 format_func=lambda value: dict(
@@ -5050,7 +5058,7 @@ def _render_script_settings(panel, params):
                 )[value],
             )
             params.video_language = selected_language_code
-            _set_runtime_config("ui", "video_language", params.video_language)
+            _set_runtime_config("ui", "script_language", params.video_language)
 
             # 使用带 key 的局部容器限定折叠入口样式，保持 expander 的原生交互，
             # 同时避免样式误伤页面顶部的“基础设置”等其他折叠区域。
@@ -5153,41 +5161,42 @@ def _render_script_settings(panel, params):
                 height=180,
                 key="video_script",
             )
-            if _effective_script_generation_backend() == "loomloom":
-                st.caption(tr("LoomLoom Video Terms Reuse Help"))
-            elif st.button(
-                tr("Generate Video Keywords"),
-                key="auto_generate_terms",
-                use_container_width=True,
-                type="secondary",
-                icon=":material/auto_awesome:",
-            ):
-                if not params.video_script:
-                    # 视频关键词需要基于文案提取，文案为空时提前提示并跳过模型调用。
-                    st.toast(tr("Please Enter the Video Subject"))
-                    st.warning(tr("Please Enter the Video Subject"))
-                else:
-                    with st.spinner(tr("Generating Video Keywords")):
-                        terms = _run_llm_read_operation(
-                            "generate_terms",
-                            lambda app_config_snapshot: llm.generate_terms(
-                                params.video_subject,
-                                params.video_script,
-                                amount=8 if params.match_materials_to_script else 5,
-                                match_script_order=params.match_materials_to_script,
-                                app_config=app_config_snapshot,
-                            ),
-                        )
-                        if "Error: " in terms:
-                            st.error(tr(terms))
-                        else:
-                            st.session_state["video_terms"] = ", ".join(terms)
+            with st.expander(tr("Keywords Settings"), expanded=False):
+                if _effective_script_generation_backend() == "loomloom":
+                    st.caption(tr("LoomLoom Video Terms Reuse Help"))
+                elif st.button(
+                    tr("Generate Video Keywords"),
+                    key="auto_generate_terms",
+                    use_container_width=True,
+                    type="secondary",
+                    icon=":material/auto_awesome:",
+                ):
+                    if not params.video_script:
+                        # 视频关键词需要基于文案提取，文案为空时提前提示并跳过模型调用。
+                        st.toast(tr("Please Enter the Video Subject"))
+                        st.warning(tr("Please Enter the Video Subject"))
+                    else:
+                        with st.spinner(tr("Generating Video Keywords")):
+                            terms = _run_llm_read_operation(
+                                "generate_terms",
+                                lambda app_config_snapshot: llm.generate_terms(
+                                    params.video_subject,
+                                    params.video_script,
+                                    amount=8 if params.match_materials_to_script else 5,
+                                    match_script_order=params.match_materials_to_script,
+                                    app_config=app_config_snapshot,
+                                ),
+                            )
+                            if "Error: " in terms:
+                                st.error(tr(terms))
+                            else:
+                                st.session_state["video_terms"] = ", ".join(terms)
 
-            params.video_terms = st.text_area(
-                tr("Video Keywords"),
-                help=tr("Video Keywords Help"),
-                key="video_terms",
-            )
+                params.video_terms = st.text_area(
+                    tr("Video Keywords"),
+                    help=tr("Video Keywords Help"),
+                    key="video_terms",
+                )
 
 
 def _render_video_settings(panel, params):
@@ -5195,7 +5204,7 @@ def _render_video_settings(panel, params):
     uploaded_files = []
     with panel:
         with st.container(border=True):
-            _section_header(tr("Video Settings"), 2)
+            _section_header(tr("Video Settings"), 2, tr("Step Video Caption"))
             video_concat_modes = [
                 (tr("Sequential"), "sequential"),
                 (tr("Random"), "random"),
@@ -5264,75 +5273,6 @@ def _render_video_settings(panel, params):
                     key="local_video_materials_uploader",
                 )
 
-            # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
-            # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
-            # “随机拼接”，同时保留用户原选择，关闭后自动恢复。
-            sync_script_order_concat_mode()
-            selected_concat_mode = stable_selectbox(
-                tr("Video Concat Mode"),
-                options=[value for _, value in video_concat_modes],
-                default_value=_saved_ui_choice(
-                    "video_concat_mode",
-                    [value for _, value in video_concat_modes],
-                    VideoConcatMode.random.value,
-                ),
-                key="video_concat_mode_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_concat_modes
-                )[value],
-                disabled=bool(st.session_state.get("match_materials_to_script", False)),
-            )
-            params.video_concat_mode = VideoConcatMode(selected_concat_mode)
-
-            params.match_materials_to_script = st.checkbox(
-                tr("Match Materials to Script Order"),
-                help=tr("Match Materials to Script Order Help"),
-                key="match_materials_to_script",
-                on_change=sync_script_order_concat_mode,
-            )
-            _set_runtime_config(
-                "app",
-                "match_materials_to_script",
-                params.match_materials_to_script,
-            )
-            # 顺序匹配开启时，sequential 是派生出的强制值，不应覆盖用户在关闭
-            # 该功能时选择的拼接偏好；关闭后仍能恢复此前的 random/sequential。
-            if not params.match_materials_to_script:
-                _set_runtime_config(
-                    "ui", "video_concat_mode", params.video_concat_mode.value
-                )
-
-            # 视频转场模式
-            video_transition_modes = [
-                (tr("None"), VideoTransitionMode.none.value),
-                (tr("Shuffle"), VideoTransitionMode.shuffle.value),
-                (tr("FadeIn"), VideoTransitionMode.fade_in.value),
-                (tr("FadeOut"), VideoTransitionMode.fade_out.value),
-                (tr("SlideIn"), VideoTransitionMode.slide_in.value),
-                (tr("SlideOut"), VideoTransitionMode.slide_out.value),
-                (tr("ZoomIn"), VideoTransitionMode.zoom_in.value),
-                (tr("ZoomOut"), VideoTransitionMode.zoom_out.value),
-            ]
-            selected_transition_mode = stable_selectbox(
-                tr("Video Transition Mode"),
-                options=[value for _, value in video_transition_modes],
-                default_value=_saved_ui_choice(
-                    "video_transition_mode",
-                    [value for _, value in video_transition_modes],
-                    VideoTransitionMode.none.value,
-                ),
-                key="video_transition_mode_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_transition_modes
-                )[value],
-            )
-            params.video_transition_mode = VideoTransitionMode(selected_transition_mode)
-            _set_runtime_config(
-                "ui",
-                "video_transition_mode",
-                params.video_transition_mode.value,
-            )
-
             video_aspect_ratios = [
                 (tr("Portrait"), VideoAspect.portrait.value),
                 (tr("Landscape"), VideoAspect.landscape.value),
@@ -5369,155 +5309,226 @@ def _render_video_settings(panel, params):
             _set_runtime_config(
                 "ui", video_aspect_config_key, params.video_aspect.value
             )
-
-            video_fit_modes = [
-                (tr("Fill and Crop"), VideoFitMode.cover.value),
-                (tr("Fit with Black Bars"), VideoFitMode.contain.value),
-            ]
-            selected_fit_mode = stable_selectbox(
-                tr("Video Fit Mode"),
-                options=[value for _, value in video_fit_modes],
-                default_value=_saved_ui_choice(
-                    "video_fit_mode",
-                    [value for _, value in video_fit_modes],
-                    VideoFitMode.cover.value,
-                ),
-                key="video_fit_mode_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_fit_modes
-                )[value],
-                help=tr("Video Fit Mode Help"),
-            )
-            params.video_fit_mode = VideoFitMode(selected_fit_mode)
-            _set_runtime_config(
-                "ui", "video_fit_mode", params.video_fit_mode.value
-            )
-
-            # MiniMax H3 的远端时长范围是 4～15 秒。选择秘塔时使用完整能力
-            # 范围，既避免 2/3 秒被按 4 秒计费，也让 WebUI 与 CLI、服务层一致。
-            if params.video_source == "metaso_minimax":
-                video_clip_durations = list(
-                    range(
-                        metaso_minimax.DEFAULT_MIN_DURATION_SECONDS,
-                        metaso_minimax.DEFAULT_MAX_DURATION_SECONDS + 1,
-                    )
-                )
-            elif params.video_source == "muapi":
-                video_clip_durations = list(
-                    range(
-                        muapi.DEFAULT_MIN_DURATION_SECONDS,
-                        muapi.DEFAULT_MAX_DURATION_SECONDS + 1,
-                    )
-                )
-            else:
-                video_clip_durations = [2, 3, 4, 5, 6, 7, 8, 9, 10]
-            params.video_clip_duration = stable_selectbox(
-                tr("Clip Duration"),
-                options=video_clip_durations,
-                default_value=_saved_ui_choice(
-                    "video_clip_duration",
-                    video_clip_durations,
-                    5
-                    if params.video_source in {"metaso_minimax", "muapi"}
-                    else 3,
-                ),
-                key="video_clip_duration_select",
-                help=tr("Clip Duration Help"),
-            )
-            _set_runtime_config(
-                "ui", "video_clip_duration", params.video_clip_duration
-            )
-            clip_speed_key = localized_widget_key("video_clip_speed_slider")
-            # session_state 可能来自旧任务、API 参数或旧版页面状态。控件创建前
-            # 统一归一化，既保留合法选择，也确保 slider 始终收到 0.5～2.0
-            # 范围内的有限浮点数。
-            st.session_state[clip_speed_key] = utils.normalize_clip_speed(
-                st.session_state.get(
-                    clip_speed_key,
-                    _saved_ui_number("video_clip_speed", 1.0, 0.5, 2.0),
-                )
-            )
-            params.video_clip_speed = st.slider(
-                tr("Clip Speed"),
-                min_value=0.5,
-                max_value=2.0,
-                step=0.05,
-                format="%.2fx",
-                key=clip_speed_key,
-                help=tr("Clip Speed Help"),
-            )
-            _set_runtime_config("ui", "video_clip_speed", params.video_clip_speed)
-            video_count_options = [1, 2, 3, 4, 5]
-            params.video_count = stable_selectbox(
-                tr("Number of Videos Generated Simultaneously"),
-                options=video_count_options,
-                default_value=_saved_ui_choice(
-                    "video_count", video_count_options, 1
-                ),
-                key="video_count_select",
-            )
-            _set_runtime_config("ui", "video_count", params.video_count)
-
-            video_codec_options = [
-                (tr("Default Video Encoder"), DEFAULT_VIDEO_CODEC_OPTION),
-                ("libx264 (CPU)", "libx264"),
-                ("NVIDIA NVENC (h264_nvenc)", "h264_nvenc"),
-                ("AMD AMF (h264_amf)", "h264_amf"),
-                ("Intel QSV (h264_qsv)", "h264_qsv"),
-                ("Windows MediaFoundation (h264_mf)", "h264_mf"),
-                ("macOS VideoToolbox (h264_videotoolbox)", "h264_videotoolbox"),
-            ]
-            saved_video_codec = config.app.get(
-                "video_codec", DEFAULT_VIDEO_CODEC_OPTION
-            )
-            saved_video_codec_values = [item[1] for item in video_codec_options]
-            if saved_video_codec not in saved_video_codec_values:
-                # 旧版本或手工配置可能留下无效值。UI 回到“默认”而不是替用户
-                # 固定某个编码器，后端仍会按稳定策略解析为 libx264。
-                saved_video_codec = DEFAULT_VIDEO_CODEC_OPTION
-            selected_video_codec = stable_selectbox(
-                tr("Video Encoder"),
-                options=saved_video_codec_values,
-                default_value=saved_video_codec,
-                key="video_encoder_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_codec_options
-                )[value],
-                help=tr("Video Encoder Help"),
-            )
-            if selected_video_codec == DEFAULT_VIDEO_CODEC_OPTION:
-                # 默认模式不持久化具体编码器，让配置表达“跟随项目默认值”。
-                _delete_runtime_config("app", "video_codec")
-            else:
-                _set_runtime_config("app", "video_codec", selected_video_codec)
-
-            concurrency_options = [1, 2, 4, 6, 8]
-            if params.video_source in {"pexels", "pixabay", "coverr"}:
-                selected_material_concurrency = stable_selectbox(
-                    tr("Material Concurrency"),
-                    options=concurrency_options,
+            st.caption(tr("Video Advanced Caption"))
+            with st.expander(tr("Advanced Settings"), expanded=False):
+                # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
+                # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
+                # “随机拼接”，同时保留用户原选择，关闭后自动恢复。
+                sync_script_order_concat_mode()
+                selected_concat_mode = stable_selectbox(
+                    tr("Video Concat Mode"),
+                    options=[value for _, value in video_concat_modes],
                     default_value=_saved_ui_choice(
-                        "material_concurrency", concurrency_options, 1, config.app
+                        "video_concat_mode",
+                        [value for _, value in video_concat_modes],
+                        VideoConcatMode.random.value,
                     ),
-                    key="material_concurrency_select",
-                    help=tr("Material Concurrency Help"),
+                    key="video_concat_mode_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in video_concat_modes
+                    )[value],
+                    disabled=bool(st.session_state.get("match_materials_to_script", False)),
+                )
+                params.video_concat_mode = VideoConcatMode(selected_concat_mode)
+
+                params.match_materials_to_script = st.checkbox(
+                    tr("Match Materials to Script Order"),
+                    help=tr("Match Materials to Script Order Help"),
+                    key="match_materials_to_script",
+                    on_change=sync_script_order_concat_mode,
                 )
                 _set_runtime_config(
-                    "app", "material_concurrency", selected_material_concurrency
+                    "app",
+                    "match_materials_to_script",
+                    params.match_materials_to_script,
+                )
+                # 顺序匹配开启时，sequential 是派生出的强制值，不应覆盖用户在关闭
+                # 该功能时选择的拼接偏好；关闭后仍能恢复此前的 random/sequential。
+                if not params.match_materials_to_script:
+                    _set_runtime_config(
+                        "ui", "video_concat_mode", params.video_concat_mode.value
+                    )
+
+                # 视频转场模式
+                video_transition_modes = [
+                    (tr("None"), VideoTransitionMode.none.value),
+                    (tr("Shuffle"), VideoTransitionMode.shuffle.value),
+                    (tr("FadeIn"), VideoTransitionMode.fade_in.value),
+                    (tr("FadeOut"), VideoTransitionMode.fade_out.value),
+                    (tr("SlideIn"), VideoTransitionMode.slide_in.value),
+                    (tr("SlideOut"), VideoTransitionMode.slide_out.value),
+                    (tr("ZoomIn"), VideoTransitionMode.zoom_in.value),
+                    (tr("ZoomOut"), VideoTransitionMode.zoom_out.value),
+                ]
+                selected_transition_mode = stable_selectbox(
+                    tr("Video Transition Mode"),
+                    options=[value for _, value in video_transition_modes],
+                    default_value=_saved_ui_choice(
+                        "video_transition_mode",
+                        [value for _, value in video_transition_modes],
+                        VideoTransitionMode.none.value,
+                    ),
+                    key="video_transition_mode_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in video_transition_modes
+                    )[value],
+                )
+                params.video_transition_mode = VideoTransitionMode(selected_transition_mode)
+                _set_runtime_config(
+                    "ui",
+                    "video_transition_mode",
+                    params.video_transition_mode.value,
                 )
 
-            selected_clip_concurrency = stable_selectbox(
-                tr("Clip Rendering Concurrency"),
-                options=concurrency_options,
-                default_value=_saved_ui_choice(
-                    "video_clip_concurrency", concurrency_options, 1, config.app
-                ),
-                key="clip_rendering_concurrency_select",
-                help=tr("Clip Rendering Concurrency Help"),
-            )
-            _set_runtime_config(
-                "app", "video_clip_concurrency", selected_clip_concurrency
-            )
+
+                video_fit_modes = [
+                    (tr("Fill and Crop"), VideoFitMode.cover.value),
+                    (tr("Fit with Black Bars"), VideoFitMode.contain.value),
+                ]
+                selected_fit_mode = stable_selectbox(
+                    tr("Video Fit Mode"),
+                    options=[value for _, value in video_fit_modes],
+                    default_value=_saved_ui_choice(
+                        "video_fit_mode",
+                        [value for _, value in video_fit_modes],
+                        VideoFitMode.cover.value,
+                    ),
+                    key="video_fit_mode_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in video_fit_modes
+                    )[value],
+                    help=tr("Video Fit Mode Help"),
+                )
+                params.video_fit_mode = VideoFitMode(selected_fit_mode)
+                _set_runtime_config(
+                    "ui", "video_fit_mode", params.video_fit_mode.value
+                )
+
+                # MiniMax H3 的远端时长范围是 4～15 秒。选择秘塔时使用完整能力
+                # 范围，既避免 2/3 秒被按 4 秒计费，也让 WebUI 与 CLI、服务层一致。
+                if params.video_source == "metaso_minimax":
+                    video_clip_durations = list(
+                        range(
+                            metaso_minimax.DEFAULT_MIN_DURATION_SECONDS,
+                            metaso_minimax.DEFAULT_MAX_DURATION_SECONDS + 1,
+                        )
+                    )
+                elif params.video_source == "muapi":
+                    video_clip_durations = list(
+                        range(
+                            muapi.DEFAULT_MIN_DURATION_SECONDS,
+                            muapi.DEFAULT_MAX_DURATION_SECONDS + 1,
+                        )
+                    )
+                else:
+                    video_clip_durations = [2, 3, 4, 5, 6, 7, 8, 9, 10]
+                params.video_clip_duration = stable_selectbox(
+                    tr("Clip Duration"),
+                    options=video_clip_durations,
+                    default_value=_saved_ui_choice(
+                        "video_clip_duration",
+                        video_clip_durations,
+                        5
+                        if params.video_source in {"metaso_minimax", "muapi"}
+                        else 3,
+                    ),
+                    key="video_clip_duration_select",
+                    help=tr("Clip Duration Help"),
+                )
+                _set_runtime_config(
+                    "ui", "video_clip_duration", params.video_clip_duration
+                )
+                clip_speed_key = localized_widget_key("video_clip_speed_slider")
+                # session_state 可能来自旧任务、API 参数或旧版页面状态。控件创建前
+                # 统一归一化，既保留合法选择，也确保 slider 始终收到 0.5～2.0
+                # 范围内的有限浮点数。
+                st.session_state[clip_speed_key] = utils.normalize_clip_speed(
+                    st.session_state.get(
+                        clip_speed_key,
+                        _saved_ui_number("video_clip_speed", 1.0, 0.5, 2.0),
+                    )
+                )
+                params.video_clip_speed = st.slider(
+                    tr("Clip Speed"),
+                    min_value=0.5,
+                    max_value=2.0,
+                    step=0.05,
+                    format="%.2fx",
+                    key=clip_speed_key,
+                    help=tr("Clip Speed Help"),
+                )
+                _set_runtime_config("ui", "video_clip_speed", params.video_clip_speed)
+                video_count_options = [1, 2, 3, 4, 5]
+                params.video_count = stable_selectbox(
+                    tr("Number of Videos Generated Simultaneously"),
+                    options=video_count_options,
+                    default_value=_saved_ui_choice(
+                        "video_count", video_count_options, 1
+                    ),
+                    key="video_count_select",
+                )
+                _set_runtime_config("ui", "video_count", params.video_count)
+
+                video_codec_options = [
+                    (tr("Default Video Encoder"), DEFAULT_VIDEO_CODEC_OPTION),
+                    ("libx264 (CPU)", "libx264"),
+                    ("NVIDIA NVENC (h264_nvenc)", "h264_nvenc"),
+                    ("AMD AMF (h264_amf)", "h264_amf"),
+                    ("Intel QSV (h264_qsv)", "h264_qsv"),
+                    ("Windows MediaFoundation (h264_mf)", "h264_mf"),
+                    ("macOS VideoToolbox (h264_videotoolbox)", "h264_videotoolbox"),
+                ]
+                saved_video_codec = config.app.get(
+                    "video_codec", DEFAULT_VIDEO_CODEC_OPTION
+                )
+                saved_video_codec_values = [item[1] for item in video_codec_options]
+                if saved_video_codec not in saved_video_codec_values:
+                    # 旧版本或手工配置可能留下无效值。UI 回到“默认”而不是替用户
+                    # 固定某个编码器，后端仍会按稳定策略解析为 libx264。
+                    saved_video_codec = DEFAULT_VIDEO_CODEC_OPTION
+                selected_video_codec = stable_selectbox(
+                    tr("Video Encoder"),
+                    options=saved_video_codec_values,
+                    default_value=saved_video_codec,
+                    key="video_encoder_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in video_codec_options
+                    )[value],
+                    help=tr("Video Encoder Help"),
+                )
+                if selected_video_codec == DEFAULT_VIDEO_CODEC_OPTION:
+                    # 默认模式不持久化具体编码器，让配置表达“跟随项目默认值”。
+                    _delete_runtime_config("app", "video_codec")
+                else:
+                    _set_runtime_config("app", "video_codec", selected_video_codec)
+
+                concurrency_options = [1, 2, 4, 6, 8]
+                if params.video_source in {"pexels", "pixabay", "coverr"}:
+                    selected_material_concurrency = stable_selectbox(
+                        tr("Material Concurrency"),
+                        options=concurrency_options,
+                        default_value=_saved_ui_choice(
+                            "material_concurrency", concurrency_options, 1, config.app
+                        ),
+                        key="material_concurrency_select",
+                        help=tr("Material Concurrency Help"),
+                    )
+                    _set_runtime_config(
+                        "app", "material_concurrency", selected_material_concurrency
+                    )
+
+                selected_clip_concurrency = stable_selectbox(
+                    tr("Clip Rendering Concurrency"),
+                    options=concurrency_options,
+                    default_value=_saved_ui_choice(
+                        "video_clip_concurrency", concurrency_options, 1, config.app
+                    ),
+                    key="clip_rendering_concurrency_select",
+                    help=tr("Clip Rendering Concurrency Help"),
+                )
+                _set_runtime_config(
+                    "app", "video_clip_concurrency", selected_clip_concurrency
+                )
 
             if params.video_source == "loomloom":
                 _render_loomloom_video_settings(params)
@@ -6910,11 +6921,39 @@ def _render_background_music_settings(params, elevenlabs_api_key_rendered=False)
     return uploaded_bgm_file
 
 
+ZH_VOICE_NAMES = {
+    "zh-CN-XiaoxiaoNeural": "晓晓（温暖自然，推荐）",
+    "zh-CN-XiaoyiNeural": "晓伊（活泼可爱）",
+    "zh-CN-YunxiNeural": "云希（阳光少年，推荐）",
+    "zh-CN-YunjianNeural": "云健（沉稳有力）",
+    "zh-CN-YunyangNeural": "云扬（专业新闻）",
+    "zh-CN-YunxiaNeural": "云夏（可爱童声）",
+    "zh-CN-liaoning-XiaobeiNeural": "晓北（东北口音）",
+    "zh-CN-shaanxi-XiaoniNeural": "晓妮（陕西口音）",
+    "zh-HK-HiuMaanNeural": "晓曼（粤语）",
+    "zh-HK-WanLungNeural": "云龙（粤语）",
+    "zh-HK-HiuGaaiNeural": "晓佳（粤语）",
+    "zh-TW-HsiaoChenNeural": "晓臻（台湾）",
+    "zh-TW-YunJheNeural": "云哲（台湾）",
+    "zh-TW-HsiaoYuNeural": "晓雨（台湾）",
+}
+
+
+def _friendly_zh_voice(voice_value):
+    """把常见中文音色显示为通俗的中文名称，其余音色返回空。"""
+    base = voice_value.rsplit("-", 1)[0]
+    name = ZH_VOICE_NAMES.get(base)
+    if not name:
+        return ""
+    gender = tr("Female") if voice_value.endswith("Female") else tr("Male")
+    return f"{name} · {gender}"
+
+
 def _render_audio_settings(panel, params):
     """渲染音频设置并返回上传音频与当前配音模式。"""
     with panel:
         with st.container(border=True):
-            _section_header(tr("Audio Settings"), 3)
+            _section_header(tr("Audio Settings"), 3, tr("Step Audio Caption"))
 
             # 配音方式是音频设置的一级状态，负责明确区分自动配音、用户上传和无配音。
             # 旧配置没有 voice_mode 时，根据原 tts_server 的无配音哨兵保持兼容。
@@ -6946,6 +6985,8 @@ def _render_audio_settings(panel, params):
             )
             _set_runtime_config("ui", "voice_mode", voice_mode)
             tts_mode_enabled = voice_mode == VOICE_MODE_TTS
+            voice_slot = st.container()
+            adv_audio = st.expander(tr("Advanced Settings"), expanded=False)
 
             # Provider 下拉只负责选择自动配音服务；无配音已经由上方模式控制，
             # 不再作为 TTS Provider 混入列表，避免两个入口表达同一状态。
@@ -6967,39 +7008,45 @@ def _render_audio_settings(panel, params):
             if saved_tts_server not in tts_server_values:
                 saved_tts_server = "azure-tts-v1"
 
-            if tts_mode_enabled:
-                selected_tts_server = stable_selectbox(
-                    tr("Voiceover Service"),
-                    options=tts_server_values,
-                    default_value=saved_tts_server,
-                    key="tts_server_select",
-                    format_func=lambda value: dict(
-                        (v, label) for v, label in tts_servers
-                    )[value],
-                )
-            else:
-                # 非自动配音模式不渲染 TTS 控件，但保留上次选择，切回后可以继续使用。
-                selected_tts_server = saved_tts_server
+            with adv_audio:
+                if tts_mode_enabled:
+                    selected_tts_server = stable_selectbox(
+                        tr("Voiceover Service"),
+                        options=tts_server_values,
+                        default_value=saved_tts_server,
+                        key="tts_server_select",
+                        format_func=lambda value: dict(
+                            (v, label) for v, label in tts_servers
+                        )[value],
+                    )
+                else:
+                    # 非自动配音模式不渲染 TTS 控件，但保留上次选择，切回后可以继续使用。
+                    selected_tts_server = saved_tts_server
 
-            _set_runtime_config("ui", "tts_server", selected_tts_server)
+                _set_runtime_config("ui", "tts_server", selected_tts_server)
 
-            # 服务说明紧跟 Provider 选择，先告诉用户需要准备什么，再进入音色和
-            # 凭证配置。没有说明的 Provider 不渲染空提示块。
-            if tts_mode_enabled:
-                provider_tips = get_tts_provider_tips(selected_tts_server)
-                if provider_tips:
-                    st.info(provider_tips)
+                # 服务说明紧跟 Provider 选择，先告诉用户需要准备什么，再进入音色和
+                # 凭证配置。没有说明的 Provider 不渲染空提示块。
+                if tts_mode_enabled:
+                    provider_tips = get_tts_provider_tips(selected_tts_server)
+                    if provider_tips:
+                        st.info(provider_tips)
 
-            # MiniMax 只复用下方通用“配音声音”选择器。Provider 配置函数负责
-            # 刷新远端音色并返回友好文案，不再额外渲染 Voice ID 和音色下拉框。
-            minimax_voices = []
-            minimax_voice_labels = {}
-            if tts_mode_enabled and selected_tts_server == "minimax-tts":
-                minimax_voices, minimax_voice_labels = _render_minimax_tts_settings()
+                # MiniMax 只复用下方通用“配音声音”选择器。Provider 配置函数负责
+                # 刷新远端音色并返回友好文案，不再额外渲染 Voice ID 和音色下拉框。
+                minimax_voices = []
+                minimax_voice_labels = {}
+                if tts_mode_enabled and selected_tts_server == "minimax-tts":
+                    minimax_voices, minimax_voice_labels = _render_minimax_tts_settings()
 
             # 根据选择的TTS服务器获取声音列表
             filtered_voices = []
             saved_voice_name = config.ui.get("voice_name", "")
+            if not config.ui.get("voice_chosen_v2", False):
+                # 首次使用新版界面：默认中文女声“晓晓”，之后以用户的选择为准。
+                saved_voice_name = ""
+                if selected_tts_server == "azure-tts-v1":
+                    saved_voice_name = "zh-CN-XiaoxiaoNeural-Female"
             elevenlabs_api_key_rendered = False
 
             if not tts_mode_enabled:
@@ -7043,6 +7090,19 @@ def _render_audio_settings(panel, params):
                 all_voices = voice.get_all_azure_voices(filter_locals=None)
 
                 # 根据选择的TTS服务器筛选声音
+                with adv_audio:
+                    zh_only_voices = st.checkbox(
+                        tr("Chinese Voices Only"),
+                        value=not (
+                            config.ui.get("voice_chosen_v2", False)
+                            and saved_voice_name
+                            and not saved_voice_name.startswith("zh-")
+                        ),
+                        key="zh_only_voices_checkbox",
+                        help=tr("Chinese Voices Only Help"),
+                    )
+                if zh_only_voices:
+                    all_voices = [v for v in all_voices if v.startswith("zh-")]
                 for v in all_voices:
                     if selected_tts_server == "azure-tts-v2":
                         # V2版本的声音名称中包含"v2"
@@ -7073,6 +7133,9 @@ def _render_audio_settings(panel, params):
                     )
                 if voice.is_voxcpm_voice(v):
                     return v.split(":", 1)[1] or DEFAULT_VOXCPM_VOICE
+                zh_name = _friendly_zh_voice(v)
+                if zh_name:
+                    return zh_name
                 return (
                     v.replace("Female", tr("Female"))
                     .replace("Male", tr("Male"))
@@ -7116,411 +7179,414 @@ def _render_audio_settings(panel, params):
             if saved_voice_name_index >= len(friendly_names) and friendly_names:
                 saved_voice_name_index = 0
 
-            # 确保有声音可选
-            if tts_mode_enabled and friendly_names:
-                voice_name = stable_selectbox(
-                    tr("Voiceover Voice"),
-                    options=list(friendly_names.keys()),
-                    default_value=list(friendly_names.keys())[saved_voice_name_index],
-                    key=f"speech_synthesis_select_{selected_tts_server}",
-                    format_func=lambda value: friendly_names.get(
-                        value,
-                        str(value).removeprefix("minimax:"),
-                    ),
-                    # MiniMax 支持用户直接输入列表外的克隆或生成音色 ID；其它
-                    # Provider 维持原选择器行为，不扩大本次修改的影响范围。
-                    accept_new_options=selected_tts_server == "minimax-tts",
-                )
-
-                if selected_tts_server == "minimax-tts":
-                    custom_voice_id = str(voice_name or "").strip()
-                    if custom_voice_id and not voice.is_minimax_voice(custom_voice_id):
-                        voice_name = f"minimax:{custom_voice_id}"
-                    if voice.is_minimax_voice(voice_name):
-                        _set_runtime_config(
-                            "minimax_tts",
-                            "voice_id",
-                            voice_name.split(":", 1)[1],
-                        )
-
-                params.voice_name = voice_name
-                if not voice.is_no_voice(voice_name):
-                    # 占位 sentinel 仅用于非自动模式的禁用展示，不覆盖用户上一次
-                    # 真正选择的音色，切回自动配音后可以恢复原设置。
-                    _set_runtime_config("ui", "voice_name", voice_name)
-            elif tts_mode_enabled:
-                # 如果没有声音可选，显示提示信息
-                st.warning(
-                    tr(
-                        "No voices available for the selected TTS server. Please select another server."
-                    )
-                )
-                voice_name = ""
-                params.voice_name = ""
-                _set_runtime_config("ui", "voice_name", "")
-            else:
-                # 非自动配音模式不显示音色控件，只复用保存值维持参数结构稳定。
-                voice_name = saved_voice_name or voice.NO_VOICE_NAME
-                params.voice_name = voice_name
-
-            # 当选择V2版本或者声音是V2声音时，显示服务区域和API key输入框
-            if tts_mode_enabled and (
-                selected_tts_server == "azure-tts-v2"
-                or (voice_name and voice.is_azure_v2_voice(voice_name))
-            ):
-                saved_azure_speech_region = config.azure.get("speech_region", "")
-                saved_azure_speech_key = config.azure.get("speech_key", "")
-                azure_speech_region = st.text_input(
-                    tr("Speech Region"),
-                    value=saved_azure_speech_region,
-                    key="azure_speech_region_input",
-                )
-                azure_speech_key = st.text_input(
-                    tr("Speech Key"),
-                    value=saved_azure_speech_key,
-                    type="password",
-                    key="azure_speech_key_input",
-                )
-                _set_runtime_config("azure", "speech_region", azure_speech_region)
-                _set_runtime_config("azure", "speech_key", azure_speech_key)
-
-            if tts_mode_enabled and selected_tts_server == "gemini-tts":
-                # Gemini TTS 与 Gemini LLM 共用同一份密钥；在音频面板提供直接入口，
-                # 用户无需先切换 LLM Provider 才能完成语音配置。
-                gemini_tts_api_key = st.text_input(
-                    tr("Gemini API Key"),
-                    value=config.app.get("gemini_api_key", ""),
-                    type="password",
-                    key="gemini_tts_api_key_input",
-                )
-                _set_runtime_config("app", "gemini_api_key", gemini_tts_api_key)
-
-            # 当选择硅基流动时，显示API key输入框和说明信息
-            if tts_mode_enabled and (
-                selected_tts_server == "siliconflow"
-                or (voice_name and voice.is_siliconflow_voice(voice_name))
-            ):
-                saved_siliconflow_api_key = config.siliconflow.get("api_key", "")
-
-                siliconflow_api_key = st.text_input(
-                    tr("SiliconFlow API Key"),
-                    value=saved_siliconflow_api_key,
-                    type="password",
-                    key="siliconflow_api_key_input",
-                )
-
-                _set_runtime_config("siliconflow", "api_key", siliconflow_api_key)
-
-            # 当选择 Xiaomi MiMo TTS 时，复用 MiMo LLM provider 的 API Key。
-            # 这样用户如果同时使用 MiMo 生成文案和语音，只需要维护一份密钥。
-            if tts_mode_enabled and (
-                selected_tts_server == "mimo-tts"
-                or (voice_name and voice.is_mimo_voice(voice_name))
-            ):
-                saved_mimo_api_key = config.app.get("mimo_api_key", "")
-
-                mimo_api_key = st.text_input(
-                    tr("MiMo API Key"),
-                    value=saved_mimo_api_key,
-                    type="password",
-                    key="mimo_tts_api_key_input",
-                )
-
-                _set_runtime_config("app", "mimo_api_key", mimo_api_key)
-
-            # ElevenLabs API key section
-            if tts_mode_enabled and (
-                selected_tts_server == "elevenlabs"
-                or (voice_name and voice.is_elevenlabs_voice(voice_name))
-            ):
-                _render_elevenlabs_api_key_input(
-                    "ElevenLabs API Key",
-                )
-                elevenlabs_api_key_rendered = True
-
-                _elevenlabs_models = [
-                    "eleven_multilingual_v2",
-                    "eleven_flash_v2_5",
-                    "eleven_v3",
-                ]
-                saved_elevenlabs_model = config.elevenlabs.get(
-                    "model_id", "eleven_multilingual_v2"
-                )
-                if saved_elevenlabs_model not in _elevenlabs_models:
-                    saved_elevenlabs_model = "eleven_multilingual_v2"
-                elevenlabs_model = stable_selectbox(
-                    tr("ElevenLabs Model"),
-                    options=_elevenlabs_models,
-                    default_value=saved_elevenlabs_model,
-                    key="elevenlabs_model_select",
-                )
-                _set_runtime_config("elevenlabs", "model_id", elevenlabs_model)
-
-            # Fish Audio API settings section
-            if tts_mode_enabled and (
-                selected_tts_server == "fish_audio"
-                or (voice_name and voice.is_fish_audio_voice(voice_name))
-            ):
-                saved_fish_api_key = (
-                    config.fish_audio.get("api_key", "")
-                    if hasattr(config, "fish_audio") and isinstance(config.fish_audio, dict)
-                    else ""
-                )
-                fish_audio_api_key = st.text_input(
-                    tr("Fish Audio API Key"),
-                    value=saved_fish_api_key,
-                    type="password",
-                    key="fish_audio_api_key_input",
-                )
-                _set_runtime_config("fish_audio", "api_key", fish_audio_api_key)
-
-                _fish_audio_models = [
-                    "s2.1-pro-free",
-                    "s2.1-pro",
-                    "s2-pro",
-                ]
-                saved_fish_model = (
-                    config.fish_audio.get("model", "s2.1-pro-free")
-                    if hasattr(config, "fish_audio") and isinstance(config.fish_audio, dict)
-                    else "s2.1-pro-free"
-                )
-                if saved_fish_model not in _fish_audio_models:
-                    saved_fish_model = "s2.1-pro-free"
-                fish_model = stable_selectbox(
-                    tr("Fish Audio Model"),
-                    options=_fish_audio_models,
-                    default_value=saved_fish_model,
-                    key="fish_audio_model_select",
-                )
-                _set_runtime_config("fish_audio", "model", fish_model)
-
-            # ModelBest hosts VoxCPM behind its streaming Audio Speech API.
-            # The fixed provider endpoint is still editable for compatible
-            # gateways, while the user only has to supply an API key and a
-            # speech_synthesis-capable model id for the standard platform.
-            if tts_mode_enabled and (
-                selected_tts_server == "voxcpm"
-                or (voice_name and voice.is_voxcpm_voice(voice_name))
-            ):
-                _sync_voxcpm_api_key_input()
-                voxcpm_api_key = st.text_input(
-                    tr("VoxCPM API Key"),
-                    type="password",
-                    key="voxcpm_api_key_input",
-                )
-                _set_runtime_config("voxcpm", "api_key", voxcpm_api_key)
-
-                voxcpm_model = st.text_input(
-                    tr("VoxCPM Model ID"),
-                    value=config.voxcpm.get("model_id", ""),
-                    key="voxcpm_model_id_input",
-                    placeholder=tr("VoxCPM Model ID Placeholder"),
-                )
-                _set_runtime_config("voxcpm", "model_id", voxcpm_model.strip())
-
-                voxcpm_base_url = st.text_input(
-                    tr("VoxCPM Base URL"),
-                    value=config.voxcpm.get("base_url") or DEFAULT_VOXCPM_BASE_URL,
-                    key="voxcpm_base_url_input",
-                    placeholder=DEFAULT_VOXCPM_BASE_URL,
-                )
-                _set_runtime_config(
-                    "voxcpm",
-                    "base_url",
-                    (voxcpm_base_url or DEFAULT_VOXCPM_BASE_URL).strip().rstrip("/"),
-                )
-
-                uploaded_reference_audio = st.file_uploader(
-                    tr("VoxCPM Reference Audio"),
-                    type=list(voice.VOXCPM_REFERENCE_AUDIO_FILE_TYPES),
-                    key="voxcpm_reference_audio_uploader",
-                    help=tr("VoxCPM Reference Audio Help"),
-                )
-                reference_audio = _sync_voxcpm_reference_audio(
-                    uploaded_reference_audio
-                )
-                st.caption(tr("VoxCPM Reference Audio Notice"))
-                reference_audio_error = st.session_state.get(
-                    VOXCPM_REFERENCE_AUDIO_ERROR_SESSION_KEY
-                )
-                if reference_audio_error:
-                    st.error(
-                        tr("VoxCPM Reference Audio Invalid").format(
-                            error=reference_audio_error
-                        )
+            with voice_slot:
+                # 确保有声音可选
+                if tts_mode_enabled and friendly_names:
+                    voice_name = stable_selectbox(
+                        tr("Voiceover Voice"),
+                        options=list(friendly_names.keys()),
+                        default_value=list(friendly_names.keys())[saved_voice_name_index],
+                        key=f"speech_synthesis_select_{selected_tts_server}",
+                        format_func=lambda value: friendly_names.get(
+                            value,
+                            str(value).removeprefix("minimax:"),
+                        ),
+                        # MiniMax 支持用户直接输入列表外的克隆或生成音色 ID；其它
+                        # Provider 维持原选择器行为，不扩大本次修改的影响范围。
+                        accept_new_options=selected_tts_server == "minimax-tts",
                     )
 
-                if reference_audio:
-                    high_fidelity_enabled = st.toggle(
-                        tr("VoxCPM High Fidelity Delivery"),
-                        key=VOXCPM_HIGH_FIDELITY_SESSION_KEY,
-                        help=tr("VoxCPM High Fidelity Delivery Help"),
-                    )
-                    if high_fidelity_enabled:
-                        use_separate_prompt_audio = st.toggle(
-                            tr("VoxCPM Separate Prompt Audio"),
-                            key=VOXCPM_SEPARATE_PROMPT_AUDIO_SESSION_KEY,
-                            help=tr("VoxCPM Separate Prompt Audio Help"),
-                        )
-                        _sync_voxcpm_prompt_example_mode(use_separate_prompt_audio)
-                        if use_separate_prompt_audio:
-                            prompt_audio_file = st.file_uploader(
-                                tr("VoxCPM Prompt Audio"),
-                                type=list(voice.VOXCPM_REFERENCE_AUDIO_FILE_TYPES),
-                                key="voxcpm_prompt_audio_uploader",
-                                help=tr("VoxCPM Prompt Audio Help"),
+                    if selected_tts_server == "minimax-tts":
+                        custom_voice_id = str(voice_name or "").strip()
+                        if custom_voice_id and not voice.is_minimax_voice(custom_voice_id):
+                            voice_name = f"minimax:{custom_voice_id}"
+                        if voice.is_minimax_voice(voice_name):
+                            _set_runtime_config(
+                                "minimax_tts",
+                                "voice_id",
+                                voice_name.split(":", 1)[1],
                             )
-                            _sync_voxcpm_prompt_audio(prompt_audio_file)
-                        else:
-                            _clear_voxcpm_separate_prompt_audio()
-                        effective_prompt_audio = _get_voxcpm_effective_prompt_audio()
-                        if st.button(
-                            tr("Transcribe VoxCPM Prompt Audio"),
-                            key="transcribe_voxcpm_prompt_audio_button",
-                            icon=":material/transcribe:",
-                            help=tr("Transcribe VoxCPM Prompt Audio Help"),
-                            use_container_width=True,
-                            disabled=not bool(effective_prompt_audio),
-                        ):
-                            try:
-                                with st.spinner(tr("Transcribing VoxCPM Prompt Audio")):
-                                    recognized_text = subtitle.transcribe_audio_bytes(
-                                        effective_prompt_audio
-                                    )
-                            except Exception:
-                                logger.exception(
-                                    "failed to transcribe VoxCPM prompt audio"
+
+                    params.voice_name = voice_name
+                    if not voice.is_no_voice(voice_name):
+                        # 占位 sentinel 仅用于非自动模式的禁用展示，不覆盖用户上一次
+                        # 真正选择的音色，切回自动配音后可以恢复原设置。
+                        _set_runtime_config("ui", "voice_name", voice_name)
+                    _set_runtime_config("ui", "voice_chosen_v2", True)
+                elif tts_mode_enabled:
+                    # 如果没有声音可选，显示提示信息
+                    st.warning(
+                        tr(
+                            "No voices available for the selected TTS server. Please select another server."
+                        )
+                    )
+                    voice_name = ""
+                    params.voice_name = ""
+                    _set_runtime_config("ui", "voice_name", "")
+                else:
+                    # 非自动配音模式不显示音色控件，只复用保存值维持参数结构稳定。
+                    voice_name = saved_voice_name or voice.NO_VOICE_NAME
+                    params.voice_name = voice_name
+
+            with adv_audio:
+                # 当选择V2版本或者声音是V2声音时，显示服务区域和API key输入框
+                if tts_mode_enabled and (
+                    selected_tts_server == "azure-tts-v2"
+                    or (voice_name and voice.is_azure_v2_voice(voice_name))
+                ):
+                    saved_azure_speech_region = config.azure.get("speech_region", "")
+                    saved_azure_speech_key = config.azure.get("speech_key", "")
+                    azure_speech_region = st.text_input(
+                        tr("Speech Region"),
+                        value=saved_azure_speech_region,
+                        key="azure_speech_region_input",
+                    )
+                    azure_speech_key = st.text_input(
+                        tr("Speech Key"),
+                        value=saved_azure_speech_key,
+                        type="password",
+                        key="azure_speech_key_input",
+                    )
+                    _set_runtime_config("azure", "speech_region", azure_speech_region)
+                    _set_runtime_config("azure", "speech_key", azure_speech_key)
+
+                if tts_mode_enabled and selected_tts_server == "gemini-tts":
+                    # Gemini TTS 与 Gemini LLM 共用同一份密钥；在音频面板提供直接入口，
+                    # 用户无需先切换 LLM Provider 才能完成语音配置。
+                    gemini_tts_api_key = st.text_input(
+                        tr("Gemini API Key"),
+                        value=config.app.get("gemini_api_key", ""),
+                        type="password",
+                        key="gemini_tts_api_key_input",
+                    )
+                    _set_runtime_config("app", "gemini_api_key", gemini_tts_api_key)
+
+                # 当选择硅基流动时，显示API key输入框和说明信息
+                if tts_mode_enabled and (
+                    selected_tts_server == "siliconflow"
+                    or (voice_name and voice.is_siliconflow_voice(voice_name))
+                ):
+                    saved_siliconflow_api_key = config.siliconflow.get("api_key", "")
+
+                    siliconflow_api_key = st.text_input(
+                        tr("SiliconFlow API Key"),
+                        value=saved_siliconflow_api_key,
+                        type="password",
+                        key="siliconflow_api_key_input",
+                    )
+
+                    _set_runtime_config("siliconflow", "api_key", siliconflow_api_key)
+
+                # 当选择 Xiaomi MiMo TTS 时，复用 MiMo LLM provider 的 API Key。
+                # 这样用户如果同时使用 MiMo 生成文案和语音，只需要维护一份密钥。
+                if tts_mode_enabled and (
+                    selected_tts_server == "mimo-tts"
+                    or (voice_name and voice.is_mimo_voice(voice_name))
+                ):
+                    saved_mimo_api_key = config.app.get("mimo_api_key", "")
+
+                    mimo_api_key = st.text_input(
+                        tr("MiMo API Key"),
+                        value=saved_mimo_api_key,
+                        type="password",
+                        key="mimo_tts_api_key_input",
+                    )
+
+                    _set_runtime_config("app", "mimo_api_key", mimo_api_key)
+
+                # ElevenLabs API key section
+                if tts_mode_enabled and (
+                    selected_tts_server == "elevenlabs"
+                    or (voice_name and voice.is_elevenlabs_voice(voice_name))
+                ):
+                    _render_elevenlabs_api_key_input(
+                        "ElevenLabs API Key",
+                    )
+                    elevenlabs_api_key_rendered = True
+
+                    _elevenlabs_models = [
+                        "eleven_multilingual_v2",
+                        "eleven_flash_v2_5",
+                        "eleven_v3",
+                    ]
+                    saved_elevenlabs_model = config.elevenlabs.get(
+                        "model_id", "eleven_multilingual_v2"
+                    )
+                    if saved_elevenlabs_model not in _elevenlabs_models:
+                        saved_elevenlabs_model = "eleven_multilingual_v2"
+                    elevenlabs_model = stable_selectbox(
+                        tr("ElevenLabs Model"),
+                        options=_elevenlabs_models,
+                        default_value=saved_elevenlabs_model,
+                        key="elevenlabs_model_select",
+                    )
+                    _set_runtime_config("elevenlabs", "model_id", elevenlabs_model)
+
+                # Fish Audio API settings section
+                if tts_mode_enabled and (
+                    selected_tts_server == "fish_audio"
+                    or (voice_name and voice.is_fish_audio_voice(voice_name))
+                ):
+                    saved_fish_api_key = (
+                        config.fish_audio.get("api_key", "")
+                        if hasattr(config, "fish_audio") and isinstance(config.fish_audio, dict)
+                        else ""
+                    )
+                    fish_audio_api_key = st.text_input(
+                        tr("Fish Audio API Key"),
+                        value=saved_fish_api_key,
+                        type="password",
+                        key="fish_audio_api_key_input",
+                    )
+                    _set_runtime_config("fish_audio", "api_key", fish_audio_api_key)
+
+                    _fish_audio_models = [
+                        "s2.1-pro-free",
+                        "s2.1-pro",
+                        "s2-pro",
+                    ]
+                    saved_fish_model = (
+                        config.fish_audio.get("model", "s2.1-pro-free")
+                        if hasattr(config, "fish_audio") and isinstance(config.fish_audio, dict)
+                        else "s2.1-pro-free"
+                    )
+                    if saved_fish_model not in _fish_audio_models:
+                        saved_fish_model = "s2.1-pro-free"
+                    fish_model = stable_selectbox(
+                        tr("Fish Audio Model"),
+                        options=_fish_audio_models,
+                        default_value=saved_fish_model,
+                        key="fish_audio_model_select",
+                    )
+                    _set_runtime_config("fish_audio", "model", fish_model)
+
+                # ModelBest hosts VoxCPM behind its streaming Audio Speech API.
+                # The fixed provider endpoint is still editable for compatible
+                # gateways, while the user only has to supply an API key and a
+                # speech_synthesis-capable model id for the standard platform.
+                if tts_mode_enabled and (
+                    selected_tts_server == "voxcpm"
+                    or (voice_name and voice.is_voxcpm_voice(voice_name))
+                ):
+                    _sync_voxcpm_api_key_input()
+                    voxcpm_api_key = st.text_input(
+                        tr("VoxCPM API Key"),
+                        type="password",
+                        key="voxcpm_api_key_input",
+                    )
+                    _set_runtime_config("voxcpm", "api_key", voxcpm_api_key)
+
+                    voxcpm_model = st.text_input(
+                        tr("VoxCPM Model ID"),
+                        value=config.voxcpm.get("model_id", ""),
+                        key="voxcpm_model_id_input",
+                        placeholder=tr("VoxCPM Model ID Placeholder"),
+                    )
+                    _set_runtime_config("voxcpm", "model_id", voxcpm_model.strip())
+
+                    voxcpm_base_url = st.text_input(
+                        tr("VoxCPM Base URL"),
+                        value=config.voxcpm.get("base_url") or DEFAULT_VOXCPM_BASE_URL,
+                        key="voxcpm_base_url_input",
+                        placeholder=DEFAULT_VOXCPM_BASE_URL,
+                    )
+                    _set_runtime_config(
+                        "voxcpm",
+                        "base_url",
+                        (voxcpm_base_url or DEFAULT_VOXCPM_BASE_URL).strip().rstrip("/"),
+                    )
+
+                    uploaded_reference_audio = st.file_uploader(
+                        tr("VoxCPM Reference Audio"),
+                        type=list(voice.VOXCPM_REFERENCE_AUDIO_FILE_TYPES),
+                        key="voxcpm_reference_audio_uploader",
+                        help=tr("VoxCPM Reference Audio Help"),
+                    )
+                    reference_audio = _sync_voxcpm_reference_audio(
+                        uploaded_reference_audio
+                    )
+                    st.caption(tr("VoxCPM Reference Audio Notice"))
+                    reference_audio_error = st.session_state.get(
+                        VOXCPM_REFERENCE_AUDIO_ERROR_SESSION_KEY
+                    )
+                    if reference_audio_error:
+                        st.error(
+                            tr("VoxCPM Reference Audio Invalid").format(
+                                error=reference_audio_error
+                            )
+                        )
+
+                    if reference_audio:
+                        high_fidelity_enabled = st.toggle(
+                            tr("VoxCPM High Fidelity Delivery"),
+                            key=VOXCPM_HIGH_FIDELITY_SESSION_KEY,
+                            help=tr("VoxCPM High Fidelity Delivery Help"),
+                        )
+                        if high_fidelity_enabled:
+                            use_separate_prompt_audio = st.toggle(
+                                tr("VoxCPM Separate Prompt Audio"),
+                                key=VOXCPM_SEPARATE_PROMPT_AUDIO_SESSION_KEY,
+                                help=tr("VoxCPM Separate Prompt Audio Help"),
+                            )
+                            _sync_voxcpm_prompt_example_mode(use_separate_prompt_audio)
+                            if use_separate_prompt_audio:
+                                prompt_audio_file = st.file_uploader(
+                                    tr("VoxCPM Prompt Audio"),
+                                    type=list(voice.VOXCPM_REFERENCE_AUDIO_FILE_TYPES),
+                                    key="voxcpm_prompt_audio_uploader",
+                                    help=tr("VoxCPM Prompt Audio Help"),
                                 )
-                                recognized_text = ""
-                            if recognized_text:
-                                st.session_state[VOXCPM_PROMPT_TEXT_SESSION_KEY] = (
-                                    recognized_text
-                                )
-                                st.toast(tr("VoxCPM Prompt Audio Transcribed"))
+                                _sync_voxcpm_prompt_audio(prompt_audio_file)
                             else:
-                                st.error(tr("VoxCPM Prompt Audio Transcription Failed"))
-                        st.text_area(
-                            tr("VoxCPM Prompt Text"),
-                            key=VOXCPM_PROMPT_TEXT_SESSION_KEY,
-                            help=tr("VoxCPM Prompt Text Help"),
-                            height=100,
-                        )
-                        st.caption(tr("VoxCPM Prompt Transcript Review"))
-                        prompt_error = _get_voxcpm_prompt_validation_error()
-                        if prompt_error:
-                            st.error(
-                                tr("VoxCPM Prompt Invalid").format(
-                                    error=prompt_error
-                                )
+                                _clear_voxcpm_separate_prompt_audio()
+                            effective_prompt_audio = _get_voxcpm_effective_prompt_audio()
+                            if st.button(
+                                tr("Transcribe VoxCPM Prompt Audio"),
+                                key="transcribe_voxcpm_prompt_audio_button",
+                                icon=":material/transcribe:",
+                                help=tr("Transcribe VoxCPM Prompt Audio Help"),
+                                use_container_width=True,
+                                disabled=not bool(effective_prompt_audio),
+                            ):
+                                try:
+                                    with st.spinner(tr("Transcribing VoxCPM Prompt Audio")):
+                                        recognized_text = subtitle.transcribe_audio_bytes(
+                                            effective_prompt_audio
+                                        )
+                                except Exception:
+                                    logger.exception(
+                                        "failed to transcribe VoxCPM prompt audio"
+                                    )
+                                    recognized_text = ""
+                                if recognized_text:
+                                    st.session_state[VOXCPM_PROMPT_TEXT_SESSION_KEY] = (
+                                        recognized_text
+                                    )
+                                    st.toast(tr("VoxCPM Prompt Audio Transcribed"))
+                                else:
+                                    st.error(tr("VoxCPM Prompt Audio Transcription Failed"))
+                            st.text_area(
+                                tr("VoxCPM Prompt Text"),
+                                key=VOXCPM_PROMPT_TEXT_SESSION_KEY,
+                                help=tr("VoxCPM Prompt Text Help"),
+                                height=100,
                             )
-                    else:
-                        _clear_voxcpm_prompt_state()
+                            st.caption(tr("VoxCPM Prompt Transcript Review"))
+                            prompt_error = _get_voxcpm_prompt_validation_error()
+                            if prompt_error:
+                                st.error(
+                                    tr("VoxCPM Prompt Invalid").format(
+                                        error=prompt_error
+                                    )
+                                )
+                        else:
+                            _clear_voxcpm_prompt_state()
 
-            # Chatterbox API settings section (self-hosted, OpenAI-compatible)
-            if tts_mode_enabled and (
-                selected_tts_server == "chatterbox"
-                or (voice_name and voice.is_chatterbox_voice(voice_name))
-            ):
-                chatterbox_base_url = st.text_input(
-                    tr("Chatterbox Base URL"),
-                    value=config.chatterbox.get("base_url")
-                    or DEFAULT_CHATTERBOX_BASE_URL,
-                    key="chatterbox_base_url_input",
-                    placeholder=tr("Chatterbox Base URL Placeholder"),
-                )
-                _set_runtime_config(
-                    "chatterbox", "base_url", (chatterbox_base_url or "").strip()
-                )
+                # Chatterbox API settings section (self-hosted, OpenAI-compatible)
+                if tts_mode_enabled and (
+                    selected_tts_server == "chatterbox"
+                    or (voice_name and voice.is_chatterbox_voice(voice_name))
+                ):
+                    chatterbox_base_url = st.text_input(
+                        tr("Chatterbox Base URL"),
+                        value=config.chatterbox.get("base_url")
+                        or DEFAULT_CHATTERBOX_BASE_URL,
+                        key="chatterbox_base_url_input",
+                        placeholder=tr("Chatterbox Base URL Placeholder"),
+                    )
+                    _set_runtime_config(
+                        "chatterbox", "base_url", (chatterbox_base_url or "").strip()
+                    )
 
-                chatterbox_api_key = st.text_input(
-                    tr("Chatterbox API Key"),
-                    value=config.chatterbox.get("api_key", ""),
-                    type="password",
-                    key="chatterbox_api_key_input",
-                )
-                _set_runtime_config("chatterbox", "api_key", chatterbox_api_key)
+                    chatterbox_api_key = st.text_input(
+                        tr("Chatterbox API Key"),
+                        value=config.chatterbox.get("api_key", ""),
+                        type="password",
+                        key="chatterbox_api_key_input",
+                    )
+                    _set_runtime_config("chatterbox", "api_key", chatterbox_api_key)
 
-                chatterbox_model = st.text_input(
-                    tr("Chatterbox Model"),
-                    value=config.chatterbox.get("model_id") or DEFAULT_CHATTERBOX_MODEL,
-                    key="chatterbox_model_input",
-                )
-                _set_runtime_config(
-                    "chatterbox",
-                    "model_id",
-                    (chatterbox_model or DEFAULT_CHATTERBOX_MODEL).strip(),
-                )
+                    chatterbox_model = st.text_input(
+                        tr("Chatterbox Model"),
+                        value=config.chatterbox.get("model_id") or DEFAULT_CHATTERBOX_MODEL,
+                        key="chatterbox_model_input",
+                    )
+                    _set_runtime_config(
+                        "chatterbox",
+                        "model_id",
+                        (chatterbox_model or DEFAULT_CHATTERBOX_MODEL).strip(),
+                    )
 
-                _saved_chatterbox_voices = (
-                    _parse_chatterbox_voices(config.chatterbox.get("voices"))
-                    or DEFAULT_CHATTERBOX_VOICES
-                )
-                if isinstance(_saved_chatterbox_voices, list):
-                    _saved_chatterbox_voices = ", ".join(_saved_chatterbox_voices)
-                chatterbox_voices = st.text_input(
-                    tr("Chatterbox Voices"),
-                    value=str(_saved_chatterbox_voices or ""),
-                    key="chatterbox_voices_input",
-                    placeholder=tr("Chatterbox Voices Placeholder"),
-                )
-                _set_runtime_config(
-                    "chatterbox",
-                    "voices",
-                    _parse_chatterbox_voices(chatterbox_voices),
-                )
+                    _saved_chatterbox_voices = (
+                        _parse_chatterbox_voices(config.chatterbox.get("voices"))
+                        or DEFAULT_CHATTERBOX_VOICES
+                    )
+                    if isinstance(_saved_chatterbox_voices, list):
+                        _saved_chatterbox_voices = ", ".join(_saved_chatterbox_voices)
+                    chatterbox_voices = st.text_input(
+                        tr("Chatterbox Voices"),
+                        value=str(_saved_chatterbox_voices or ""),
+                        key="chatterbox_voices_input",
+                        placeholder=tr("Chatterbox Voices Placeholder"),
+                    )
+                    _set_runtime_config(
+                        "chatterbox",
+                        "voices",
+                        _parse_chatterbox_voices(chatterbox_voices),
+                    )
 
-            # Kokoro API settings section (self-hosted, OpenAI-compatible; voices listed from the server when left empty)
-            if tts_mode_enabled and (
-                selected_tts_server == "kokoro"
-                or (voice_name and voice.is_kokoro_voice(voice_name))
-            ):
-                kokoro_base_url = st.text_input(
-                    tr("Kokoro Base URL"),
-                    value=config.kokoro.get("base_url")
-                    or DEFAULT_KOKORO_BASE_URL,
-                    key="kokoro_base_url_input",
-                    placeholder=tr("Kokoro Base URL Placeholder"),
-                )
-                _set_runtime_config(
-                    "kokoro", "base_url", (kokoro_base_url or "").strip()
-                )
+                # Kokoro API settings section (self-hosted, OpenAI-compatible; voices listed from the server when left empty)
+                if tts_mode_enabled and (
+                    selected_tts_server == "kokoro"
+                    or (voice_name and voice.is_kokoro_voice(voice_name))
+                ):
+                    kokoro_base_url = st.text_input(
+                        tr("Kokoro Base URL"),
+                        value=config.kokoro.get("base_url")
+                        or DEFAULT_KOKORO_BASE_URL,
+                        key="kokoro_base_url_input",
+                        placeholder=tr("Kokoro Base URL Placeholder"),
+                    )
+                    _set_runtime_config(
+                        "kokoro", "base_url", (kokoro_base_url or "").strip()
+                    )
 
-                kokoro_api_key = st.text_input(
-                    tr("Kokoro API Key"),
-                    value=config.kokoro.get("api_key", ""),
-                    type="password",
-                    key="kokoro_api_key_input",
-                )
-                _set_runtime_config("kokoro", "api_key", kokoro_api_key)
+                    kokoro_api_key = st.text_input(
+                        tr("Kokoro API Key"),
+                        value=config.kokoro.get("api_key", ""),
+                        type="password",
+                        key="kokoro_api_key_input",
+                    )
+                    _set_runtime_config("kokoro", "api_key", kokoro_api_key)
 
-                kokoro_model = st.text_input(
-                    tr("Kokoro Model"),
-                    value=config.kokoro.get("model_id") or DEFAULT_KOKORO_MODEL,
-                    key="kokoro_model_input",
-                )
-                _set_runtime_config(
-                    "kokoro",
-                    "model_id",
-                    (kokoro_model or DEFAULT_KOKORO_MODEL).strip(),
-                )
+                    kokoro_model = st.text_input(
+                        tr("Kokoro Model"),
+                        value=config.kokoro.get("model_id") or DEFAULT_KOKORO_MODEL,
+                        key="kokoro_model_input",
+                    )
+                    _set_runtime_config(
+                        "kokoro",
+                        "model_id",
+                        (kokoro_model or DEFAULT_KOKORO_MODEL).strip(),
+                    )
 
-                _saved_kokoro_voices = (
-                    _parse_chatterbox_voices(config.kokoro.get("voices"))
-                    or DEFAULT_KOKORO_VOICES
-                )
-                if isinstance(_saved_kokoro_voices, list):
-                    _saved_kokoro_voices = ", ".join(_saved_kokoro_voices)
-                kokoro_voices = st.text_input(
-                    tr("Kokoro Voices"),
-                    value=str(_saved_kokoro_voices or ""),
-                    key="kokoro_voices_input",
-                    placeholder=tr("Kokoro Voices Placeholder"),
-                )
-                _set_runtime_config(
-                    "kokoro",
-                    "voices",
-                    _parse_chatterbox_voices(kokoro_voices),
-                )
+                    _saved_kokoro_voices = (
+                        _parse_chatterbox_voices(config.kokoro.get("voices"))
+                        or DEFAULT_KOKORO_VOICES
+                    )
+                    if isinstance(_saved_kokoro_voices, list):
+                        _saved_kokoro_voices = ", ".join(_saved_kokoro_voices)
+                    kokoro_voices = st.text_input(
+                        tr("Kokoro Voices"),
+                        value=str(_saved_kokoro_voices or ""),
+                        key="kokoro_voices_input",
+                        placeholder=tr("Kokoro Voices Placeholder"),
+                    )
+                    _set_runtime_config(
+                        "kokoro",
+                        "voices",
+                        _parse_chatterbox_voices(kokoro_voices),
+                    )
 
             # 三种模式只渲染当前任务真正需要的控件。自动配音可调音量和语速；
             # 上传音频只需要文件和音量；无配音不再展示无效设置。
@@ -7534,49 +7600,51 @@ def _render_audio_settings(panel, params):
             voice_rate_options = [0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5, 1.8, 2.0]
 
             if tts_mode_enabled:
-                voice_control_cols = st.columns(2)
-                with voice_control_cols[0]:
-                    params.voice_volume = stable_selectbox(
-                        tr("Voiceover Volume"),
-                        options=voice_volume_options,
-                        default_value=_saved_ui_choice(
-                            "voice_volume", voice_volume_options, 1.0
-                        ),
-                        key="voice_volume_select",
-                        format_func=lambda value: f"{int(value * 100)}%",
-                        help=tr("Voiceover Volume Help"),
-                    )
+                with adv_audio:
+                    voice_control_cols = st.columns(2)
+                    with voice_control_cols[0]:
+                        params.voice_volume = stable_selectbox(
+                            tr("Voiceover Volume"),
+                            options=voice_volume_options,
+                            default_value=_saved_ui_choice(
+                                "voice_volume", voice_volume_options, 1.0
+                            ),
+                            key="voice_volume_select",
+                            format_func=lambda value: f"{int(value * 100)}%",
+                            help=tr("Voiceover Volume Help"),
+                        )
 
-                with voice_control_cols[1]:
-                    is_voxcpm = bool(
-                        selected_tts_server == "voxcpm"
-                        or (voice_name and voice.is_voxcpm_voice(voice_name))
-                    )
-                    params.voice_rate = stable_selectbox(
-                        tr("Voiceover Speed"),
-                        options=voice_rate_options,
-                        default_value=_saved_ui_choice(
-                            "voice_rate", voice_rate_options, 1.0
-                        ),
-                        key="voice_rate_select",
-                        format_func=lambda value: f"{value:.1f}×",
-                        help=(
-                            tr("VoxCPM Speed Not Supported")
-                            if is_voxcpm
-                            else tr("Voiceover Speed Help")
-                        ),
-                        disabled=is_voxcpm,
-                    )
-                _set_runtime_config("ui", "voice_volume", params.voice_volume)
-                _set_runtime_config("ui", "voice_rate", params.voice_rate)
+                    with voice_control_cols[1]:
+                        is_voxcpm = bool(
+                            selected_tts_server == "voxcpm"
+                            or (voice_name and voice.is_voxcpm_voice(voice_name))
+                        )
+                        params.voice_rate = stable_selectbox(
+                            tr("Voiceover Speed"),
+                            options=voice_rate_options,
+                            default_value=_saved_ui_choice(
+                                "voice_rate", voice_rate_options, 1.0
+                            ),
+                            key="voice_rate_select",
+                            format_func=lambda value: f"{value:.1f}×",
+                            help=(
+                                tr("VoxCPM Speed Not Supported")
+                                if is_voxcpm
+                                else tr("Voiceover Speed Help")
+                            ),
+                            disabled=is_voxcpm,
+                        )
+                    _set_runtime_config("ui", "voice_volume", params.voice_volume)
+                    _set_runtime_config("ui", "voice_rate", params.voice_rate)
 
-                # 试听必须位于音量和语速控件之后，确保调用使用当前控件值。
-                _render_voice_preview(
-                    params,
-                    friendly_names,
-                    selected_tts_server,
-                    voice_name,
-                )
+                with voice_slot:
+                    # 试听必须位于音量和语速控件之后，确保调用使用当前控件值。
+                    _render_voice_preview(
+                        params,
+                        friendly_names,
+                        selected_tts_server,
+                        voice_name,
+                    )
             elif voice_mode == VOICE_MODE_UPLOAD:
                 custom_audio_file_types = sorted(
                     extension.removeprefix(".") for extension in CUSTOM_AUDIO_EXTENSIONS
@@ -7607,10 +7675,11 @@ def _render_audio_settings(panel, params):
                             "Custom audio will be used directly. TTS synthesis will be skipped for this task."
                         )
                     )
-            uploaded_bgm_file = _render_background_music_settings(
-                params,
-                elevenlabs_api_key_rendered=elevenlabs_api_key_rendered,
-            )
+            with adv_audio:
+                uploaded_bgm_file = _render_background_music_settings(
+                    params,
+                    elevenlabs_api_key_rendered=elevenlabs_api_key_rendered,
+                )
     return uploaded_audio_file, uploaded_bgm_file, voice_mode
 
 
@@ -7618,7 +7687,7 @@ def _render_subtitle_settings(panel, params):
     """渲染字幕设置并更新生成参数。"""
     with panel:
         with st.container(border=True):
-            _section_header(tr("Subtitle Settings"), 4)
+            _section_header(tr("Subtitle Settings"), None, tr("Step Subtitle Caption"))
             st.session_state.setdefault(
                 "subtitle_enabled_checkbox",
                 _saved_ui_bool(
@@ -7632,301 +7701,303 @@ def _render_subtitle_settings(panel, params):
             )
             _set_runtime_config("ui", "subtitle_enabled", params.subtitle_enabled)
             subtitle_settings_disabled = not params.subtitle_enabled
-            font_names = get_all_fonts()
-            saved_font_name = config.ui.get(
-                "font_name", DEFAULT_SUBTITLE_SETTINGS["font_name"]
-            )
-            saved_font_name_index = 0
-            if saved_font_name in font_names:
-                saved_font_name_index = font_names.index(saved_font_name)
-            params.font_name = stable_selectbox(
-                tr("Font"),
-                options=font_names,
-                default_value=font_names[saved_font_name_index] if font_names else "",
-                key="font_name_select",
-                disabled=subtitle_settings_disabled,
-            )
-            _set_runtime_config("ui", "font_name", params.font_name)
-
-            subtitle_positions = [
-                (tr("Top"), "top"),
-                (tr("Center"), "center"),
-                (tr("Bottom"), "bottom"),
-                (tr("2/3 from Bottom"), "two_thirds_bottom"),
-                (tr("Custom"), "custom"),
-            ]
-            saved_subtitle_position = config.ui.get(
-                "subtitle_position", DEFAULT_SUBTITLE_SETTINGS["subtitle_position"]
-            )
-            saved_position_index = 2
-            for i, (_, pos_value) in enumerate(subtitle_positions):
-                if pos_value == saved_subtitle_position:
-                    saved_position_index = i
-                    break
-            selected_subtitle_position = stable_selectbox(
-                tr("Position"),
-                options=[value for _, value in subtitle_positions],
-                default_value=subtitle_positions[saved_position_index][1],
-                key="subtitle_position_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in subtitle_positions
-                ).get(value, value),
-                disabled=subtitle_settings_disabled,
-            )
-            params.subtitle_position = selected_subtitle_position
-            _set_runtime_config("ui", "subtitle_position", params.subtitle_position)
-
-            # Subtitle Display Mode (Sentence vs Single Word)
-            subtitle_display_modes = [
-                (tr("Sentence by Sentence"), "sentence"),
-                (tr("Single Word (Word by Word)"), "word_by_word"),
-            ]
-            saved_display_mode = config.ui.get(
-                "subtitle_display_mode",
-                DEFAULT_SUBTITLE_SETTINGS["subtitle_display_mode"],
-            )
-            saved_mode_idx = 0
-            for i, (_, mode_val) in enumerate(subtitle_display_modes):
-                if mode_val == saved_display_mode:
-                    saved_mode_idx = i
-                    break
-            selected_display_mode = stable_selectbox(
-                tr("Display Mode"),
-                options=[val for _, val in subtitle_display_modes],
-                default_value=subtitle_display_modes[saved_mode_idx][1],
-                key="subtitle_display_mode_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in subtitle_display_modes
-                ).get(value, value),
-                help=tr("Word-by-word Timing Help"),
-                disabled=subtitle_settings_disabled,
-            )
-            params.subtitle_display_mode = selected_display_mode
-            _set_runtime_config(
-                "ui", "subtitle_display_mode", params.subtitle_display_mode
-            )
-
-            # Subtitle Animation (None vs Pop Spring)
-            subtitle_animations = [
-                (tr("None (Animation)"), "none"),
-                (tr("Pop Up (Spring)"), "pop_spring"),
-            ]
-            saved_anim = config.ui.get(
-                "subtitle_animation",
-                DEFAULT_SUBTITLE_SETTINGS["subtitle_animation"],
-            )
-            saved_anim_idx = 0
-            for i, (_, anim_val) in enumerate(subtitle_animations):
-                if anim_val == saved_anim:
-                    saved_anim_idx = i
-                    break
-            selected_anim = stable_selectbox(
-                tr("Subtitle Animation"),
-                options=[val for _, val in subtitle_animations],
-                default_value=subtitle_animations[saved_anim_idx][1],
-                key="subtitle_animation_select",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in subtitle_animations
-                ).get(value, value),
-                disabled=subtitle_settings_disabled,
-            )
-            params.subtitle_animation = selected_anim
-            _set_runtime_config(
-                "ui", "subtitle_animation", params.subtitle_animation
-            )
-
-            if params.subtitle_position == "custom":
-                saved_custom_position = config.ui.get(
-                    "custom_position", DEFAULT_SUBTITLE_SETTINGS["custom_position"]
+            st.caption(tr("Subtitle Advanced Caption"))
+            with st.expander(tr("Advanced Settings"), expanded=False):
+                font_names = get_all_fonts()
+                saved_font_name = config.ui.get(
+                    "font_name", DEFAULT_SUBTITLE_SETTINGS["font_name"]
                 )
-                st.session_state.setdefault(
-                    "custom_position_input", str(saved_custom_position)
-                )
-                custom_position = st.text_input(
-                    tr("Custom Position (% from top)"),
-                    key="custom_position_input",
+                saved_font_name_index = 0
+                if saved_font_name in font_names:
+                    saved_font_name_index = font_names.index(saved_font_name)
+                params.font_name = stable_selectbox(
+                    tr("Font"),
+                    options=font_names,
+                    default_value=font_names[saved_font_name_index] if font_names else "",
+                    key="font_name_select",
                     disabled=subtitle_settings_disabled,
                 )
-                try:
-                    params.custom_position = float(custom_position)
-                    if params.custom_position < 0 or params.custom_position > 100:
-                        st.error(tr("Please enter a value between 0 and 100"))
-                    else:
-                        _set_runtime_config(
-                            "ui", "custom_position", params.custom_position
-                        )
-                except ValueError:
-                    st.error(tr("Please enter a valid number"))
+                _set_runtime_config("ui", "font_name", params.font_name)
 
-            # 非中文语言的颜色标签通常比中文更长。为颜色选择器保留适当宽度，
-            # 避免标签换行，同时仍给字号滑块保留足够的可操作空间。
-            font_cols = st.columns([0.42, 0.58])
-            with font_cols[0]:
-                saved_text_fore_color = config.ui.get(
-                    "text_fore_color", DEFAULT_SUBTITLE_SETTINGS["text_fore_color"]
+                subtitle_positions = [
+                    (tr("Top"), "top"),
+                    (tr("Center"), "center"),
+                    (tr("Bottom"), "bottom"),
+                    (tr("2/3 from Bottom"), "two_thirds_bottom"),
+                    (tr("Custom"), "custom"),
+                ]
+                saved_subtitle_position = config.ui.get(
+                    "subtitle_position", DEFAULT_SUBTITLE_SETTINGS["subtitle_position"]
                 )
-                st.session_state.setdefault("font_color_picker", saved_text_fore_color)
-                params.text_fore_color = st.color_picker(
-                    tr("Font Color"),
-                    key="font_color_picker",
+                saved_position_index = 2
+                for i, (_, pos_value) in enumerate(subtitle_positions):
+                    if pos_value == saved_subtitle_position:
+                        saved_position_index = i
+                        break
+                selected_subtitle_position = stable_selectbox(
+                    tr("Position"),
+                    options=[value for _, value in subtitle_positions],
+                    default_value=subtitle_positions[saved_position_index][1],
+                    key="subtitle_position_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in subtitle_positions
+                    ).get(value, value),
                     disabled=subtitle_settings_disabled,
                 )
-                _set_runtime_config("ui", "text_fore_color", params.text_fore_color)
+                params.subtitle_position = selected_subtitle_position
+                _set_runtime_config("ui", "subtitle_position", params.subtitle_position)
 
-            with font_cols[1]:
-                saved_font_size = config.ui.get(
-                    "font_size", DEFAULT_SUBTITLE_SETTINGS["font_size"]
+                # Subtitle Display Mode (Sentence vs Single Word)
+                subtitle_display_modes = [
+                    (tr("Sentence by Sentence"), "sentence"),
+                    (tr("Single Word (Word by Word)"), "word_by_word"),
+                ]
+                saved_display_mode = config.ui.get(
+                    "subtitle_display_mode",
+                    DEFAULT_SUBTITLE_SETTINGS["subtitle_display_mode"],
                 )
-                st.session_state.setdefault("font_size_slider", saved_font_size)
-                params.font_size = st.slider(
-                    tr("Font Size"),
-                    30,
-                    100,
-                    key="font_size_slider",
+                saved_mode_idx = 0
+                for i, (_, mode_val) in enumerate(subtitle_display_modes):
+                    if mode_val == saved_display_mode:
+                        saved_mode_idx = i
+                        break
+                selected_display_mode = stable_selectbox(
+                    tr("Display Mode"),
+                    options=[val for _, val in subtitle_display_modes],
+                    default_value=subtitle_display_modes[saved_mode_idx][1],
+                    key="subtitle_display_mode_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in subtitle_display_modes
+                    ).get(value, value),
+                    help=tr("Word-by-word Timing Help"),
                     disabled=subtitle_settings_disabled,
                 )
-                _set_runtime_config("ui", "font_size", params.font_size)
-
-            stroke_cols = st.columns([0.42, 0.58])
-            with stroke_cols[0]:
-                st.session_state.setdefault(
-                    "stroke_color_picker",
-                    _saved_ui_color(
-                        "stroke_color", DEFAULT_SUBTITLE_SETTINGS["stroke_color"]
-                    ),
+                params.subtitle_display_mode = selected_display_mode
+                _set_runtime_config(
+                    "ui", "subtitle_display_mode", params.subtitle_display_mode
                 )
-                params.stroke_color = st.color_picker(
-                    tr("Stroke Color"),
-                    key="stroke_color_picker",
+
+                # Subtitle Animation (None vs Pop Spring)
+                subtitle_animations = [
+                    (tr("None (Animation)"), "none"),
+                    (tr("Pop Up (Spring)"), "pop_spring"),
+                ]
+                saved_anim = config.ui.get(
+                    "subtitle_animation",
+                    DEFAULT_SUBTITLE_SETTINGS["subtitle_animation"],
+                )
+                saved_anim_idx = 0
+                for i, (_, anim_val) in enumerate(subtitle_animations):
+                    if anim_val == saved_anim:
+                        saved_anim_idx = i
+                        break
+                selected_anim = stable_selectbox(
+                    tr("Subtitle Animation"),
+                    options=[val for _, val in subtitle_animations],
+                    default_value=subtitle_animations[saved_anim_idx][1],
+                    key="subtitle_animation_select",
+                    format_func=lambda value: dict(
+                        (v, label) for label, v in subtitle_animations
+                    ).get(value, value),
                     disabled=subtitle_settings_disabled,
                 )
-                _set_runtime_config("ui", "stroke_color", params.stroke_color)
-            with stroke_cols[1]:
-                st.session_state.setdefault(
-                    "stroke_width_slider",
-                    _saved_ui_number(
-                        "stroke_width",
-                        DEFAULT_SUBTITLE_SETTINGS["stroke_width"],
+                params.subtitle_animation = selected_anim
+                _set_runtime_config(
+                    "ui", "subtitle_animation", params.subtitle_animation
+                )
+
+                if params.subtitle_position == "custom":
+                    saved_custom_position = config.ui.get(
+                        "custom_position", DEFAULT_SUBTITLE_SETTINGS["custom_position"]
+                    )
+                    st.session_state.setdefault(
+                        "custom_position_input", str(saved_custom_position)
+                    )
+                    custom_position = st.text_input(
+                        tr("Custom Position (% from top)"),
+                        key="custom_position_input",
+                        disabled=subtitle_settings_disabled,
+                    )
+                    try:
+                        params.custom_position = float(custom_position)
+                        if params.custom_position < 0 or params.custom_position > 100:
+                            st.error(tr("Please enter a value between 0 and 100"))
+                        else:
+                            _set_runtime_config(
+                                "ui", "custom_position", params.custom_position
+                            )
+                    except ValueError:
+                        st.error(tr("Please enter a valid number"))
+
+                # 非中文语言的颜色标签通常比中文更长。为颜色选择器保留适当宽度，
+                # 避免标签换行，同时仍给字号滑块保留足够的可操作空间。
+                font_cols = st.columns([0.42, 0.58])
+                with font_cols[0]:
+                    saved_text_fore_color = config.ui.get(
+                        "text_fore_color", DEFAULT_SUBTITLE_SETTINGS["text_fore_color"]
+                    )
+                    st.session_state.setdefault("font_color_picker", saved_text_fore_color)
+                    params.text_fore_color = st.color_picker(
+                        tr("Font Color"),
+                        key="font_color_picker",
+                        disabled=subtitle_settings_disabled,
+                    )
+                    _set_runtime_config("ui", "text_fore_color", params.text_fore_color)
+
+                with font_cols[1]:
+                    saved_font_size = config.ui.get(
+                        "font_size", DEFAULT_SUBTITLE_SETTINGS["font_size"]
+                    )
+                    st.session_state.setdefault("font_size_slider", saved_font_size)
+                    params.font_size = st.slider(
+                        tr("Font Size"),
+                        30,
+                        100,
+                        key="font_size_slider",
+                        disabled=subtitle_settings_disabled,
+                    )
+                    _set_runtime_config("ui", "font_size", params.font_size)
+
+                stroke_cols = st.columns([0.42, 0.58])
+                with stroke_cols[0]:
+                    st.session_state.setdefault(
+                        "stroke_color_picker",
+                        _saved_ui_color(
+                            "stroke_color", DEFAULT_SUBTITLE_SETTINGS["stroke_color"]
+                        ),
+                    )
+                    params.stroke_color = st.color_picker(
+                        tr("Stroke Color"),
+                        key="stroke_color_picker",
+                        disabled=subtitle_settings_disabled,
+                    )
+                    _set_runtime_config("ui", "stroke_color", params.stroke_color)
+                with stroke_cols[1]:
+                    st.session_state.setdefault(
+                        "stroke_width_slider",
+                        _saved_ui_number(
+                            "stroke_width",
+                            DEFAULT_SUBTITLE_SETTINGS["stroke_width"],
+                            0.0,
+                            10.0,
+                        ),
+                    )
+                    params.stroke_width = st.slider(
+                        tr("Stroke Width"),
                         0.0,
                         10.0,
-                    ),
-                )
-                params.stroke_width = st.slider(
-                    tr("Stroke Width"),
-                    0.0,
-                    10.0,
-                    key="stroke_width_slider",
-                    disabled=subtitle_settings_disabled,
-                )
-                _set_runtime_config("ui", "stroke_width", params.stroke_width)
+                        key="stroke_width_slider",
+                        disabled=subtitle_settings_disabled,
+                    )
+                    _set_runtime_config("ui", "stroke_width", params.stroke_width)
 
-            # 背景开关的本地化名称普遍比颜色标签更长，因此让开关占据略多空间。
-            subtitle_bg_cols = st.columns([0.55, 0.45])
-            saved_subtitle_background_enabled = config.ui.get(
-                "subtitle_background_enabled",
-                DEFAULT_SUBTITLE_SETTINGS["subtitle_background_enabled"],
-            )
-            st.session_state.setdefault(
-                "subtitle_background_enabled_checkbox",
-                saved_subtitle_background_enabled,
-            )
-            with subtitle_bg_cols[0]:
-                subtitle_background_enabled = st.checkbox(
-                    tr("Enable Subtitle Background"),
-                    key="subtitle_background_enabled_checkbox",
-                    disabled=subtitle_settings_disabled,
+                # 背景开关的本地化名称普遍比颜色标签更长，因此让开关占据略多空间。
+                subtitle_bg_cols = st.columns([0.55, 0.45])
+                saved_subtitle_background_enabled = config.ui.get(
+                    "subtitle_background_enabled",
+                    DEFAULT_SUBTITLE_SETTINGS["subtitle_background_enabled"],
                 )
-            _set_runtime_config(
-                "ui",
-                "subtitle_background_enabled",
-                subtitle_background_enabled,
-            )
-
-            # 背景颜色和圆角样式都从属于字幕背景开关。子控件始终保留在页面中，
-            # 父开关关闭时统一禁用，避免一个控件消失而另一个控件禁用造成布局跳动。
-            # 颜色值仍保存在 UI 配置中，重新启用背景后可以恢复用户之前的选择；
-            # 传给生成服务的参数则设为 False，确保关闭状态不会实际渲染背景。
-            saved_subtitle_background_color = config.ui.get(
-                "subtitle_background_color",
-                DEFAULT_SUBTITLE_SETTINGS["subtitle_background_color"],
-            )
-            st.session_state.setdefault(
-                "subtitle_background_color_picker",
-                saved_subtitle_background_color,
-            )
-            with subtitle_bg_cols[1]:
-                selected_subtitle_background_color = st.color_picker(
-                    tr("Subtitle Background Color"),
-                    key="subtitle_background_color_picker",
-                    disabled=subtitle_settings_disabled
-                    or not subtitle_background_enabled,
+                st.session_state.setdefault(
+                    "subtitle_background_enabled_checkbox",
+                    saved_subtitle_background_enabled,
                 )
-            _set_runtime_config(
-                "ui",
-                "subtitle_background_color",
-                selected_subtitle_background_color,
-            )
-            params.text_background_color = (
-                selected_subtitle_background_color
-                if subtitle_background_enabled
-                else False
-            )
-
-            saved_rounded_subtitle_background = config.ui.get(
-                "rounded_subtitle_background",
-                DEFAULT_SUBTITLE_SETTINGS["rounded_subtitle_background"],
-            )
-            # 背景关闭时，圆角背景没有可渲染的底色。这里禁用控件但保留原配置，
-            # 用户下次重新开启字幕背景后，可以继续使用之前保存的圆角偏好。
-            rounded_background_disabled = (
-                subtitle_settings_disabled or not subtitle_background_enabled
-            )
-            st.session_state.setdefault(
-                "rounded_subtitle_background_checkbox",
-                saved_rounded_subtitle_background,
-            )
-            selected_rounded_subtitle_background = st.checkbox(
-                tr("Rounded Subtitle Background"),
-                help=tr("Rounded Subtitle Background Help"),
-                disabled=rounded_background_disabled,
-                key="rounded_subtitle_background_checkbox",
-            )
-            params.rounded_subtitle_background = (
-                selected_rounded_subtitle_background
-                if subtitle_background_enabled
-                else False
-            )
-            if not subtitle_settings_disabled and subtitle_background_enabled:
+                with subtitle_bg_cols[0]:
+                    subtitle_background_enabled = st.checkbox(
+                        tr("Enable Subtitle Background"),
+                        key="subtitle_background_enabled_checkbox",
+                        disabled=subtitle_settings_disabled,
+                    )
                 _set_runtime_config(
                     "ui",
+                    "subtitle_background_enabled",
+                    subtitle_background_enabled,
+                )
+
+                # 背景颜色和圆角样式都从属于字幕背景开关。子控件始终保留在页面中，
+                # 父开关关闭时统一禁用，避免一个控件消失而另一个控件禁用造成布局跳动。
+                # 颜色值仍保存在 UI 配置中，重新启用背景后可以恢复用户之前的选择；
+                # 传给生成服务的参数则设为 False，确保关闭状态不会实际渲染背景。
+                saved_subtitle_background_color = config.ui.get(
+                    "subtitle_background_color",
+                    DEFAULT_SUBTITLE_SETTINGS["subtitle_background_color"],
+                )
+                st.session_state.setdefault(
+                    "subtitle_background_color_picker",
+                    saved_subtitle_background_color,
+                )
+                with subtitle_bg_cols[1]:
+                    selected_subtitle_background_color = st.color_picker(
+                        tr("Subtitle Background Color"),
+                        key="subtitle_background_color_picker",
+                        disabled=subtitle_settings_disabled
+                        or not subtitle_background_enabled,
+                    )
+                _set_runtime_config(
+                    "ui",
+                    "subtitle_background_color",
+                    selected_subtitle_background_color,
+                )
+                params.text_background_color = (
+                    selected_subtitle_background_color
+                    if subtitle_background_enabled
+                    else False
+                )
+
+                saved_rounded_subtitle_background = config.ui.get(
                     "rounded_subtitle_background",
-                    selected_rounded_subtitle_background,
+                    DEFAULT_SUBTITLE_SETTINGS["rounded_subtitle_background"],
                 )
-
-            if video.subtitle_colors_are_indistinguishable(params):
-                # 同色配置仍然是合法的用户选择，因此只在字幕设置区域就近提示，
-                # 不阻止生成。用户可以根据实际视觉需求决定是否继续。
-                st.warning(tr("Subtitle Colors Are Indistinguishable"))
-
-            subtitle_preview_text = params.video_script or params.video_subject
-            selected_font_path = os.path.join(font_dir, params.font_name)
-            if (
-                params.subtitle_enabled
-                and subtitle_preview_text
-                and not video.subtitle_font_supports_text(
-                    selected_font_path, subtitle_preview_text
+                # 背景关闭时，圆角背景没有可渲染的底色。这里禁用控件但保留原配置，
+                # 用户下次重新开启字幕背景后，可以继续使用之前保存的圆角偏好。
+                rounded_background_disabled = (
+                    subtitle_settings_disabled or not subtitle_background_enabled
                 )
-            ):
-                st.warning(tr("Subtitle Font Does Not Support Text"))
+                st.session_state.setdefault(
+                    "rounded_subtitle_background_checkbox",
+                    saved_rounded_subtitle_background,
+                )
+                selected_rounded_subtitle_background = st.checkbox(
+                    tr("Rounded Subtitle Background"),
+                    help=tr("Rounded Subtitle Background Help"),
+                    disabled=rounded_background_disabled,
+                    key="rounded_subtitle_background_checkbox",
+                )
+                params.rounded_subtitle_background = (
+                    selected_rounded_subtitle_background
+                    if subtitle_background_enabled
+                    else False
+                )
+                if not subtitle_settings_disabled and subtitle_background_enabled:
+                    _set_runtime_config(
+                        "ui",
+                        "rounded_subtitle_background",
+                        selected_rounded_subtitle_background,
+                    )
 
-            if st.button(
-                tr("Restore Default Subtitle Settings"),
-                key="restore_default_subtitle_settings",
-                icon=":material/restart_alt:",
-                on_click=reset_subtitle_settings,
-                use_container_width=True,
-            ):
-                st.toast(tr("Default Subtitle Settings Restored"))
+                if video.subtitle_colors_are_indistinguishable(params):
+                    # 同色配置仍然是合法的用户选择，因此只在字幕设置区域就近提示，
+                    # 不阻止生成。用户可以根据实际视觉需求决定是否继续。
+                    st.warning(tr("Subtitle Colors Are Indistinguishable"))
+
+                subtitle_preview_text = params.video_script or params.video_subject
+                selected_font_path = os.path.join(font_dir, params.font_name)
+                if (
+                    params.subtitle_enabled
+                    and subtitle_preview_text
+                    and not video.subtitle_font_supports_text(
+                        selected_font_path, subtitle_preview_text
+                    )
+                ):
+                    st.warning(tr("Subtitle Font Does Not Support Text"))
+
+                if st.button(
+                    tr("Restore Default Subtitle Settings"),
+                    key="restore_default_subtitle_settings",
+                    icon=":material/restart_alt:",
+                    on_click=reset_subtitle_settings,
+                    use_container_width=True,
+                ):
+                    st.toast(tr("Default Subtitle Settings Restored"))
 
 
 def _stage_task_audio(audio_path, audio_bytes):
@@ -8403,15 +8474,27 @@ def _render_application():
     if restore_applied or restore_succeeded:
         st.success(tr("Task Configuration Loaded"))
 
-    # 三列工作流：①文案 → ②素材 → ③音频与字幕。音频和字幕共用右列，
-    # 使三列高度更均衡；各面板仍按原顺序渲染，所有选项与状态键保持不变。
+    # 商业化布局：左侧主栏按“内容 → 视频素材 → 配音与字幕”纵向展开，
+    # 右侧是吸顶的“生成”面板（按钮、进度与成片）。各面板的状态键保持不变。
+    st.markdown(
+        '<div class="mpt-stepper">'
+        f'<span><b>1</b>{html.escape(tr("Stepper Content"))}</span><i></i>'
+        f'<span><b>2</b>{html.escape(tr("Stepper Video"))}</span><i></i>'
+        f'<span><b>3</b>{html.escape(tr("Stepper Voice"))}</span><i></i>'
+        f'<span><b>4</b>{html.escape(tr("Stepper Generate"))}</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     with st.container(key="main_settings_grid"):
-        panel = st.columns(3, gap="medium")
-    left_panel = panel[0]
-    middle_panel = panel[1]
-    with panel[2]:
+        main_col, side_col = st.columns([2.2, 1], gap="large")
+    with main_col:
+        left_panel = st.container()
+        middle_panel = st.container()
         audio_panel = st.container()
         right_panel = st.container()
+    with side_col:
+        with st.container(key="generate_side_panel"):
+            side_panel = st.container()
 
     params = VideoParams(video_subject="")
     params.match_materials_to_script = bool(
@@ -8426,13 +8509,15 @@ def _render_application():
 
     _render_subtitle_settings(right_panel, params)
 
-    generation_submitted = _render_generation_controls(
-        params,
-        uploaded_files,
-        uploaded_audio_file,
-        uploaded_bgm_file,
-        voice_mode,
-    )
+    with side_panel:
+        _section_header(tr("Stepper Generate"), 4, tr("Step Generate Caption"))
+        generation_submitted = _render_generation_controls(
+            params,
+            uploaded_files,
+            uploaded_audio_file,
+            uploaded_bgm_file,
+            voice_mode,
+        )
 
     # 生成分支在启动后台线程前已经请求过保存。普通控件交互继续请求非阻塞保存；
     # 如果后台任务正在使用配置，配置层会在任务结束时自动应用并落盘最新值。

@@ -383,21 +383,6 @@ div[class*="st-key-task_row_"] button[kind="secondary"] p {
         font-size: 0.875rem;
     }
 
-    div[class*="st-key-main_settings_grid"]
-        > div[data-testid="stLayoutWrapper"]
-        > div[data-testid="stHorizontalBlock"] {
-        flex-wrap: wrap !important;
-        gap: 1rem !important;
-    }
-
-    div[class*="st-key-main_settings_grid"]
-        > div[data-testid="stLayoutWrapper"]
-        > div[data-testid="stHorizontalBlock"]
-        > div[data-testid="stColumn"] {
-        flex: 1 1 calc(50% - 0.5rem) !important;
-        width: calc(50% - 0.5rem) !important;
-        min-width: calc(50% - 0.5rem) !important;
-    }
 }
 
 /* 移动端隐藏桌面表头，并将任务行重排为“主题 + 元信息 + 操作”紧凑结构。 */
@@ -647,4 +632,63 @@ video {
     div[data-testid="stMainBlockContainer"] {
         padding: 0.75rem 1rem 3rem !important;
     }
+}
+
+/* ---- Commercial layout: stepper header + sticky generate panel ---- */
+.mpt-stepper {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0 0 1rem;
+    padding: 0.7rem 1rem;
+    background: var(--mpt-surface);
+    border: 1px solid var(--mpt-border);
+    border-radius: var(--mpt-radius);
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+.mpt-stepper span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+}
+.mpt-stepper b {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    background: var(--mpt-accent);
+    color: #fff;
+    font-size: 0.8rem;
+}
+.mpt-stepper i {
+    flex: 1 1 auto;
+    height: 2px;
+    min-width: 1rem;
+    background: var(--mpt-border);
+}
+div[class*="st-key-generate_side_panel"] {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    background: var(--mpt-surface);
+    border: 1px solid var(--mpt-border);
+    border-radius: var(--mpt-radius);
+    box-shadow: 0 4px 16px rgba(16, 24, 40, 0.08);
+    padding: 1rem;
+}
+div[class*="st-key-main_settings_grid"] div[data-testid="stColumn"]:has(.st-key-generate_side_panel) {
+    align-self: stretch;
+}
+/* collapsed "高级设置" expanders look like quiet secondary sections */
+div[class*="st-key-main_settings_grid"] details {
+    border-style: dashed !important;
+}
+@media (max-width: 900px) {
+    div[class*="st-key-generate_side_panel"] { position: static; max-height: none; }
+    .mpt-stepper { overflow-x: auto; }
 }
