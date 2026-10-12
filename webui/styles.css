@@ -484,3 +484,167 @@ div[class*="st-key-task_row_"] button[kind="secondary"] p {
         min-width: 1.75rem !important;
     }
 }
+
+/* ==========================================================================
+   Commercial design system (appended; overrides above where needed)
+   Tokens: accent #4F46E5, surface #fff on #F6F7FB, radius 12px, 8px spacing
+   ========================================================================== */
+:root {
+    --mpt-accent: #4F46E5;
+    --mpt-accent-hover: #4338CA;
+    --mpt-surface: var(--secondary-background-color, #fff);
+    --mpt-border: rgba(128, 128, 140, 0.25);
+    --mpt-muted: rgba(128, 128, 140, 0.95);
+    --mpt-radius: 12px;
+}
+
+div[data-testid="stMainBlockContainer"] {
+    max-width: 1480px;
+    padding: 1.25rem 2rem 4rem !important;
+}
+
+/* Brand */
+.mpt-brand__name {
+    font-weight: 700 !important;
+    letter-spacing: -0.02em;
+}
+
+/* Top bar: a clean toolbar strip separated from the workspace */
+div[class*="st-key-top_bar"]:not([class*="actions"]) {
+    padding-bottom: 0.75rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--mpt-border);
+}
+
+/* Cards: the four setting sections */
+div[class*="st-key-main_settings_grid"]
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--mpt-surface);
+    border: 1px solid var(--mpt-border) !important;
+    border-radius: var(--mpt-radius) !important;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.04);
+    padding: 0.5rem 0.5rem 0.75rem;
+}
+/* nested bordered blocks inside cards stay flat */
+div[class*="st-key-main_settings_grid"]
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+    box-shadow: none;
+    padding: 0;
+}
+
+/* Section titles with numbered step badge */
+.mpt-section-title {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 1.05rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    padding-bottom: 0.6rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--mpt-border);
+}
+.mpt-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    background: var(--mpt-accent);
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 700;
+    flex: 0 0 auto;
+}
+
+/* Field labels: quieter, consistent */
+label[data-testid="stWidgetLabel"] p {
+    font-size: 0.85rem;
+    font-weight: 550;
+}
+div[data-testid="stCaptionContainer"] {
+    color: var(--mpt-muted);
+}
+
+/* Inputs */
+div[data-baseweb="select"] > div,
+div[data-baseweb="input"] > div,
+div[data-baseweb="textarea"] {
+    border-radius: 8px !important;
+}
+div[data-baseweb="select"] > div:focus-within,
+div[data-baseweb="input"] > div:focus-within,
+div[data-baseweb="textarea"]:focus-within {
+    border-color: var(--mpt-accent) !important;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15) !important;
+}
+
+/* Buttons: primary = filled accent, secondary = quiet outline */
+button[kind="primary"] {
+    background: var(--mpt-accent) !important;
+    border-color: var(--mpt-accent) !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    box-shadow: 0 1px 2px rgba(79, 70, 229, 0.3);
+    transition: background 0.15s, transform 0.05s;
+}
+button[kind="primary"]:hover {
+    background: var(--mpt-accent-hover) !important;
+    border-color: var(--mpt-accent-hover) !important;
+}
+button[kind="primary"]:active {
+    transform: translateY(1px);
+}
+button[kind="secondary"] {
+    border-radius: 8px !important;
+    font-weight: 500;
+}
+button[kind="secondary"]:hover {
+    border-color: var(--mpt-accent) !important;
+    color: var(--mpt-accent) !important;
+}
+
+/* The main call to action: large, full width, obvious */
+div[class*="st-key-generate_video_button"] button {
+    min-height: 3.25rem;
+    font-size: 1.05rem !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+}
+div[class*="st-key-generate_video_button"] {
+    margin-top: 0.5rem;
+}
+
+/* Expanders (advanced settings): subtle, tidy */
+details {
+    border-radius: 8px !important;
+}
+
+/* Alerts, tabs, metrics */
+div[data-testid="stAlert"] {
+    border-radius: 10px;
+}
+button[data-baseweb="tab"] {
+    font-weight: 550;
+}
+div[data-testid="stMetric"] {
+    background: var(--mpt-surface);
+    border: 1px solid var(--mpt-border);
+    border-radius: 10px;
+    padding: 0.6rem 0.9rem;
+}
+
+/* Results: rounded video player */
+video {
+    border-radius: 10px;
+    background: #000;
+}
+
+/* Responsive: columns stack on narrow screens */
+@media (max-width: 900px) {
+    div[data-testid="stMainBlockContainer"] {
+        padding: 0.75rem 1rem 3rem !important;
+    }
+}

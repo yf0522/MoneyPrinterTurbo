@@ -70,7 +70,7 @@ from app.utils import utils
 
 st.set_page_config(
     page_title="MoneyPrinterTurbo",
-    page_icon="🤖",
+    page_icon="🎬",
     layout="wide",
     initial_sidebar_state="auto",
     menu_items={
@@ -4984,11 +4984,22 @@ def _render_loomloom_script_generation(params):
     _render_loomloom_candidates()
 
 
+def _section_header(title, step=None, caption=None):
+    """渲染统一的卡片标题：序号徽标 + 标题 + 可选说明，保证四个设置区视觉一致。"""
+    badge = f'<span class="mpt-step">{int(step)}</span>' if step else ""
+    st.markdown(
+        f'<div class="mpt-section-title">{badge}<span>{html.escape(str(title).replace("**", "").strip())}</span></div>',
+        unsafe_allow_html=True,
+    )
+    if caption:
+        st.caption(caption)
+
+
 def _render_script_settings(panel, params):
     """渲染文案设置并更新生成参数。"""
     with panel:
         with st.container(border=True):
-            st.write(tr("Video Script Settings"))
+            _section_header(tr("Video Script Settings"), 1)
             # 标签行需要容纳“配置大模型”入口，因此无法继续使用 text_area
             # 内置标签。把标签和输入框收进同一个字段容器后，可覆盖内部间距，
             # 同时让该字段与页面上的其它表单控件保持一致的外部节奏。
@@ -5184,7 +5195,7 @@ def _render_video_settings(panel, params):
     uploaded_files = []
     with panel:
         with st.container(border=True):
-            st.write(tr("Video Settings"))
+            _section_header(tr("Video Settings"), 2)
             video_concat_modes = [
                 (tr("Sequential"), "sequential"),
                 (tr("Random"), "random"),
@@ -6903,7 +6914,7 @@ def _render_audio_settings(panel, params):
     """渲染音频设置并返回上传音频与当前配音模式。"""
     with panel:
         with st.container(border=True):
-            st.write(tr("Audio Settings"))
+            _section_header(tr("Audio Settings"), 3)
 
             # 配音方式是音频设置的一级状态，负责明确区分自动配音、用户上传和无配音。
             # 旧配置没有 voice_mode 时，根据原 tts_server 的无配音哨兵保持兼容。
@@ -7607,7 +7618,7 @@ def _render_subtitle_settings(panel, params):
     """渲染字幕设置并更新生成参数。"""
     with panel:
         with st.container(border=True):
-            st.write(tr("Subtitle Settings"))
+            _section_header(tr("Subtitle Settings"), 4)
             st.session_state.setdefault(
                 "subtitle_enabled_checkbox",
                 _saved_ui_bool(
@@ -8392,12 +8403,15 @@ def _render_application():
     if restore_applied or restore_succeeded:
         st.success(tr("Task Configuration Loaded"))
 
+    # 三列工作流：①文案 → ②素材 → ③音频与字幕。音频和字幕共用右列，
+    # 使三列高度更均衡；各面板仍按原顺序渲染，所有选项与状态键保持不变。
     with st.container(key="main_settings_grid"):
-        panel = st.columns(4)
+        panel = st.columns(3, gap="medium")
     left_panel = panel[0]
     middle_panel = panel[1]
-    audio_panel = panel[2]
-    right_panel = panel[3]
+    with panel[2]:
+        audio_panel = st.container()
+        right_panel = st.container()
 
     params = VideoParams(video_subject="")
     params.match_materials_to_script = bool(

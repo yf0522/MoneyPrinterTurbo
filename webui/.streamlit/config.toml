@@ -6,3 +6,24 @@ toolbarMode = "minimal"
 
 [logger]
 hideWelcomeMessage = true
+
+# Design system: one accent color, soft neutral surfaces, 8px rhythm.
+[theme]
+primaryColor = "#4F46E5"
+font = "sans serif"
+baseRadius = "0.6rem"
+buttonRadius = "0.6rem"
+showWidgetBorder = true
+
+[theme.light]
+backgroundColor = "#F6F7FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#111827"
+borderColor = "#E5E7EB"
+
+[theme.dark]
+primaryColor = "#818CF8"
+backgroundColor = "#0F1117"
+secondaryBackgroundColor = "#181B24"
+textColor = "#E5E7EB"
+borderColor = "#2B303B"

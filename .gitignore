@@ -11,6 +11,8 @@
 /*/__pycache__/*
 .vscode
 /**/.streamlit
+!/.streamlit/
+!/.streamlit/config.toml
 __pycache__
 logs/
 
