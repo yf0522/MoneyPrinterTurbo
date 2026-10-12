@@ -616,6 +616,13 @@
         "Stepper Content": "内容",
         "Stepper Video": "视频素材",
         "Stepper Voice": "配音与字幕",
-        "Stepper Generate": "生成视频"
+        "Stepper Generate": "生成视频",
+        "Nav Create": "创建视频",
+        "Nav Library": "素材库",
+        "Nav Tasks": "任务管理",
+        "Nav Settings": "设置",
+        "Library Caption": "上传并管理你自己的视频、图片、PDF、PPT 和文档，在“创建视频”中选择“本地素材”即可使用。",
+        "Tasks Caption": "查看视频生成进度，播放、下载或重新载入历史任务的设置。",
+        "Settings Caption": "配置大模型、素材服务、自动发布、界面偏好和缓存。"
     }
 }

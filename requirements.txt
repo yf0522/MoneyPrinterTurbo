@@ -22,3 +22,7 @@ socksio==1.0.0
 pydub==0.25.1
 audioop-lts==0.2.2; python_version >= "3.13"
 litellm==1.86.2
+python-pptx>=1.0.2
+pdf2image>=1.17.0
+python-docx>=1.1.2
+pypdf>=5.0.0

@@ -692,3 +692,50 @@ div[class*="st-key-main_settings_grid"] details {
     div[class*="st-key-generate_side_panel"] { position: static; max-height: none; }
     .mpt-stepper { overflow-x: auto; }
 }
+
+/* ---- Back-office dashboard shell: sidebar nav, header, page titles ---- */
+section[data-testid="stSidebar"] {
+    background: #111827 !important;
+    border-right: 0;
+}
+section[data-testid="stSidebar"] * { color: #cbd5e1; }
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] { padding-top: 1.2rem; }
+section[data-testid="stSidebar"] a[data-testid="stSidebarNavLink"] {
+    border-radius: 8px;
+    margin: 2px 0.5rem;
+    padding: 0.55rem 0.8rem;
+    font-weight: 500;
+}
+section[data-testid="stSidebar"] a[data-testid="stSidebarNavLink"]:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+section[data-testid="stSidebar"] a[data-testid="stSidebarNavLink"][aria-current="page"] {
+    background: var(--mpt-accent, #4F46E5);
+}
+section[data-testid="stSidebar"] a[data-testid="stSidebarNavLink"][aria-current="page"] * {
+    color: #fff !important;
+    font-weight: 650;
+}
+.st-key-top_bar {
+    background: var(--mpt-surface, #fff);
+    border: 1px solid var(--mpt-border, #e5e7eb);
+    border-radius: var(--mpt-radius, 12px);
+    padding: 0.4rem 1rem;
+    margin-bottom: 1rem;
+}
+.st-key-top_bar .mpt-brand__name { font-size: 1.4rem !important; }
+.mpt-page-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0.25rem 0 0.15rem;
+}
+div[class*="st-key-library_card"],
+div[class*="st-key-tasks_card"],
+div[class*="st-key-settings_card"] {
+    background: var(--mpt-surface, #fff);
+    border: 1px solid var(--mpt-border, #e5e7eb) !important;
+    border-radius: var(--mpt-radius, 12px);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+    padding: 1rem;
+}

@@ -65,6 +65,7 @@ from app.services import sonilo as sonilo_service
 from app.services import state as sm
 from app.services import task as tm
 from app.services import version_checker
+from app.services import document_material
 from app.utils.logging_utils import configure_terminal_logger
 from app.utils import utils
 
@@ -72,7 +73,7 @@ st.set_page_config(
     page_title="MoneyPrinterTurbo",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="auto",
+    initial_sidebar_state="expanded",
     menu_items={
         "Report a bug": "https://github.com/harry0703/MoneyPrinterTurbo/issues",
         "About": "# MoneyPrinterTurbo\nSimply provide a topic or keyword for a video, and it will "
@@ -902,6 +903,7 @@ def _queue_task_restore(task_id):
     # 任务列表运行在 fragment 中，不能直接修改已经创建的主表单控件状态。
     # 这里只记录候选任务并触发整页 rerun，确认和参数恢复由主页面统一处理。
     st.session_state["task_restore_candidate_id"] = task_id
+    st.session_state["nav_goto"] = "create"
     st.session_state["task_manager_popover_nonce"] = (
         st.session_state.get("task_manager_popover_nonce", 0) + 1
     )
@@ -1715,8 +1717,8 @@ def _dismiss_settings_dialog():
 
 
 def _open_settings_dialog(target_tab=None):
-    """打开设置弹窗，并可直接定位到指定业务标签页。"""
-    st.session_state["settings_dialog_open"] = True
+    """跳转到“设置”页面，并可直接定位到指定业务标签页。"""
+    st.session_state["nav_goto"] = "settings"
     if target_tab:
         # 这里只保存稳定的业务 ID，不保存翻译文本；真正创建 tabs 前再根据
         # 当前界面语言解析 label，避免用户切换语言后旧文案成为非法选项。
@@ -1799,17 +1801,6 @@ def _render_top_bar():
             gap="small",
             width="stretch",
         ):
-            _render_task_manager_entry()
-
-            st.button(
-                tr("Settings"),
-                key="open_settings_dialog_button",
-                type="secondary",
-                icon=":material/settings:",
-                width="content",
-                on_click=_open_settings_dialog,
-            )
-
             language_codes = list(locales.keys())
             selected_index = 0
             for i, code in enumerate(language_codes):
@@ -2807,7 +2798,7 @@ def _render_cache_management_settings(panel):
             icon=":material/refresh:",
         ):
             _get_video_cache_stats_data.clear()
-            st.rerun(scope="fragment")
+            st.rerun()
 
         if open_col.button(
             tr("Open Cache Directory"),
@@ -2845,7 +2836,7 @@ def _render_cache_management_settings(panel):
             # 危险确认状态被继续保留。
             st.session_state["video_cache_cleanup_confirm_nonce"] = confirm_nonce + 1
             _get_video_cache_stats_data.clear()
-            st.rerun(scope="fragment")
+            st.rerun()
 
 
 # -----------------------------------------------------------------------------
@@ -3190,11 +3181,6 @@ def _render_key_backup_settings(panel):
 # 同时控制阅读行宽，避免弹窗在宽屏设备上显得过于松散。
 # Dialog 继承 fragment 行为，内部控件交互只重绘弹窗；函数末尾单独保存配置，
 # 关闭时通过回调触发整页同步，确保生成流程读取最新 Provider 和界面设置。
-@st.dialog(
-    tr("Settings"),
-    width="medium",
-    on_dismiss=_dismiss_settings_dialog,
-)
 def _render_settings_dialog():
     with st.container():
         # 历史 hide_config 只用于隐藏旧基础设置面板。改为固定设置入口后，该值
@@ -4986,6 +4972,208 @@ def _render_loomloom_script_generation(params):
     _render_loomloom_candidates()
 
 
+# -----------------------------------------------------------------------------
+# 素材库：视频、图片、PDF、PPT/PPTX、文档（txt/md/docx）
+# -----------------------------------------------------------------------------
+
+MATERIAL_UPLOAD_TYPES = sorted(
+    {e.removeprefix(".") for e in LOCAL_MATERIAL_EXTENSIONS}
+    | {"webm", "bmp"}
+    | {e.removeprefix(".") for e in document_material.SUPPORTED_DOCUMENT_EXTENSIONS}
+)
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".flv", ".mkv", ".webm"}
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+MATERIAL_KIND_LABELS = {
+    "video": "视频",
+    "image": "图片",
+    "slides": "幻灯片/PDF",
+    "doc": "文档",
+}
+
+
+def _video_thumbnail(video_path):
+    """用 ffmpeg 截取第一帧作为缩略图，失败时返回空字符串。"""
+    try:
+        thumb_dir = utils.storage_dir("material_thumbs", create=True)
+        thumb = os.path.join(thumb_dir, f"{uuid4().hex}.jpg")
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            import imageio_ffmpeg
+
+            ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+        subprocess.run(
+            [ffmpeg, "-y", "-ss", "0.5", "-i", video_path, "-frames:v", "1",
+             "-vf", "scale=240:-2", thumb],
+            capture_output=True, timeout=30, check=True,
+        )
+        return thumb if os.path.isfile(thumb) else ""
+    except Exception as exc:
+        logger.warning(f"video thumbnail failed: {exc}")
+        return ""
+
+
+def _material_library():
+    return st.session_state.setdefault("material_library", [])
+
+
+def _add_library_entry(entry, local_paths):
+    _material_library().append(entry)
+    for path in local_paths:
+        st.session_state["local_video_materials"].append(
+            {"provider": "local", "url": path, "duration": 0, "lib_id": entry["id"]}
+        )
+
+
+def _remove_library_entry(entry_id):
+    library = _material_library()
+    entry = next((e for e in library if e["id"] == entry_id), None)
+    if not entry:
+        return
+    library.remove(entry)
+    st.session_state["local_video_materials"] = [
+        m
+        for m in st.session_state.get("local_video_materials", [])
+        if m.get("lib_id") != entry_id
+    ]
+    for path in entry.get("paths", []) + ([entry["thumb"]] if entry.get("thumb") else []):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _use_document_text(entry_id):
+    entry = next((e for e in _material_library() if e["id"] == entry_id), None)
+    if entry and entry.get("text"):
+        st.session_state["video_script"] = entry["text"][:1500]
+        st.session_state["material_toast"] = "已把文档内容填入“视频文案”，可回到“创建视频”页修改"
+
+
+def _process_material_upload(uploaded_file):
+    """保存并转换一个上传文件，返回 (成功提示, 错误提示)。"""
+    name = os.path.basename(str(uploaded_file.name or ""))
+    ext = os.path.splitext(name)[1].lower()
+    local_dir = utils.storage_dir("local_videos", create=True)
+    entry = {"id": uuid4().hex, "name": name, "paths": [], "thumb": "", "text": "", "notes": []}
+    try:
+        if ext in _VIDEO_EXTS or ext in _IMAGE_EXTS:
+            stored = material_upload_service.save_material_upload(name, uploaded_file)
+            path = os.path.join(local_dir, stored)
+            entry["paths"] = [path]
+            if ext in _IMAGE_EXTS:
+                entry["kind"], entry["thumb"] = "image", path
+                entry["paths"] = [path]
+                entry["thumb"] = path
+                # 缩略图直接用原图，删除时不重复删除
+                _add_library_entry(entry, [path])
+                entry["thumb"] = ""
+                entry["preview"] = path
+            else:
+                entry["kind"] = "video"
+                entry["thumb"] = _video_thumbnail(path)
+                entry["preview"] = entry["thumb"]
+                _add_library_entry(entry, [path])
+        elif ext in document_material.SUPPORTED_DOCUMENT_EXTENSIONS:
+            tmp_dir = utils.storage_dir("material_tmp", create=True)
+            src = os.path.join(tmp_dir, f"{uuid4().hex}{ext}")
+            with open(src, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            try:
+                result = document_material.convert_document(src, ext, local_dir)
+            finally:
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+            entry["text"] = result.text
+            entry["notes"] = result.notes
+            entry["paths"] = list(result.pages)
+            if result.pages:
+                entry["kind"] = "slides"
+                entry["preview"] = result.pages[0]
+            else:
+                entry["kind"] = "doc"
+                entry["preview"] = ""
+            _add_library_entry(entry, result.pages)
+        else:
+            return "", f"{name}：不支持的文件格式"
+    except (
+        material_upload_service.MaterialUploadError,
+        material_upload_service.MaterialServiceError,
+        document_material.DocumentConversionError,
+    ) as exc:
+        return "", f"{name}：{exc}"
+    except Exception as exc:
+        logger.exception("material upload failed")
+        return "", f"{name}：处理失败（{exc}）"
+    detail = f"{len(entry['paths'])} 页画面" if entry["kind"] == "slides" else MATERIAL_KIND_LABELS[entry["kind"]]
+    return f"{name}：已添加（{detail}）", ""
+
+
+def _render_material_manager(prefix, source_is_local=True):
+    """素材上传区 + 已上传素材列表（缩略图、类型、删除）。"""
+    nonce = st.session_state.setdefault("material_uploader_nonce", 0)
+    if toast := st.session_state.pop("material_toast", ""):
+        st.success(toast)
+    files = st.file_uploader(
+        "上传自定义素材",
+        type=MATERIAL_UPLOAD_TYPES,
+        accept_multiple_files=True,
+        key=f"material_uploader_{prefix}_{nonce}",
+        help="支持视频、图片（jpg/png/bmp）、PDF、PPT/PPTX 和文档（txt/md/docx）。",
+    )
+    st.caption(
+        "视频直接作为素材；图片会做缓慢推拉的动态效果；PDF 与 PPT 会按页转成图片；"
+        "txt / md / docx 文档只提取文字，可一键填入视频文案。"
+    )
+    if files:
+        messages = []
+        with st.spinner("正在处理上传的文件…"):
+            for uploaded in files:
+                ok, err = _process_material_upload(uploaded)
+                messages.append((ok, err))
+        st.session_state["material_uploader_nonce"] = nonce + 1
+        st.session_state["material_messages"] = messages
+        st.rerun()
+    for ok, err in st.session_state.pop("material_messages", []):
+        (st.success if ok else st.error)(ok or err)
+
+    library = _material_library()
+    if not library:
+        st.caption("还没有上传素材。")
+        return
+    if not source_is_local:
+        st.info("已上传的素材会在“视频来源”选择为“本地素材”时使用。")
+    for entry in list(library):
+        cols = st.columns([1, 4, 1.4, 1.2], vertical_alignment="center")
+        with cols[0]:
+            if entry.get("preview") and os.path.isfile(entry["preview"]):
+                st.image(entry["preview"], width=64)
+            else:
+                st.markdown("📄" if entry["kind"] == "doc" else "🎞️")
+        with cols[1]:
+            st.markdown(f"**{entry['name']}**")
+            extra = f" · {len(entry['paths'])} 页" if entry["kind"] == "slides" else ""
+            st.caption(MATERIAL_KIND_LABELS[entry["kind"]] + extra + (" · " + "；".join(entry["notes"]) if entry["notes"] else ""))
+        with cols[2]:
+            if entry.get("text"):
+                st.button(
+                    "用作文案",
+                    key=f"use_text_{prefix}_{entry['id']}",
+                    on_click=_use_document_text,
+                    args=(entry["id"],),
+                    help="把文档提取的文字填入“视频文案”",
+                )
+        with cols[3]:
+            st.button(
+                "删除",
+                key=f"remove_material_{prefix}_{entry['id']}",
+                on_click=_remove_library_entry,
+                args=(entry["id"],),
+                icon=":material/delete:",
+            )
+
+
 def _section_header(title, step=None, caption=None):
     """渲染统一的卡片标题：序号徽标 + 标题 + 可选说明，保证四个设置区视觉一致。"""
     badge = f'<span class="mpt-step">{int(step)}</span>' if step else ""
@@ -5259,59 +5447,13 @@ def _render_video_settings(panel, params):
                 st.caption(tr("Metaso MiniMax H3 Help"))
             if params.video_source == "muapi":
                 st.caption(tr("MuAPI AI Video Help"))
-            if params.video_source == "local":
-                # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
-                local_file_types = sorted(
-                    extension.removeprefix(".")
-                    for extension in LOCAL_MATERIAL_EXTENSIONS
-                )
-                uploaded_files = st.file_uploader(
-                    tr("Upload Local Files"),
-                    type=local_file_types
-                    + [file_type.upper() for file_type in local_file_types],
-                    accept_multiple_files=True,
-                    key="local_video_materials_uploader",
-                )
+            # 自定义素材（视频/图片/PDF/PPT/文档）统一在素材管理区上传并转换，
+            # 转换后的文件写入 local_video_materials，由现有“本地素材”流水线使用。
+            _render_material_manager("create", params.video_source == "local")
 
-            video_aspect_ratios = [
-                (tr("Portrait"), VideoAspect.portrait.value),
-                (tr("Landscape"), VideoAspect.landscape.value),
-            ]
-            if loomloom_video_capability is not None:
-                ratio_labels = {value: label for label, value in video_aspect_ratios}
-                video_aspect_ratios = [
-                    (ratio_labels[value], value)
-                    for value in loomloom_video_capability.aspect_ratios
-                ]
-            # Coverr 库 99% 是 16:9 横屏,默认竖屏会让画面被大量黑边包围。
-            # 用 source-specific widget key 让每个 source 各自记忆 aspect 选择:
-            #   - 首次切到 coverr → 默认 Landscape(index=1)
-            #   - 其他 source 沿用 Portrait(index=0)
-            #   - 用户在某 source 下手动改过 aspect,session_state 会记住,
-            #     下次回到同一 source 时尊重用户选择,不会再被强制覆盖。
-            default_aspect_index = 1 if params.video_source == "coverr" else 0
-            video_aspect_values = [value for _, value in video_aspect_ratios]
-            video_aspect_config_key = f"video_aspect_{params.video_source}"
-            selected_aspect_ratio = stable_selectbox(
-                tr("Video Ratio"),
-                options=video_aspect_values,
-                default_value=_saved_ui_choice(
-                    video_aspect_config_key,
-                    video_aspect_values,
-                    video_aspect_ratios[default_aspect_index][1],
-                ),
-                key=f"video_aspect_for_{params.video_source}",
-                format_func=lambda value: dict(
-                    (v, label) for label, v in video_aspect_ratios
-                )[value],
-            )
-            params.video_aspect = VideoAspect(selected_aspect_ratio)
-            _set_runtime_config(
-                "ui", video_aspect_config_key, params.video_aspect.value
-            )
             st.caption(tr("Video Advanced Caption"))
             with st.expander(tr("Advanced Settings"), expanded=False):
-                # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
+            # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
                 # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
                 # “随机拼接”，同时保留用户原选择，关闭后自动恢复。
                 sync_script_order_concat_mode()
@@ -8456,13 +8598,17 @@ def _render_generation_controls(
     return start_button
 
 
-def _render_application():
-    """按固定顺序渲染顶部栏、弹窗、生成表单和任务结果。"""
-    _render_top_bar()
+def _page_header(title, caption=""):
+    st.markdown(
+        f'<div class="mpt-page-title">{html.escape(title)}</div>',
+        unsafe_allow_html=True,
+    )
+    if caption:
+        st.caption(caption)
 
-    if st.session_state.get("settings_dialog_open", False):
-        _render_settings_dialog()
 
+def _page_create():
+    """创建视频页：步骤条 + 三张设置卡片 + 吸顶生成面板。"""
     if _apply_pending_settings_preset():
         st.success(tr("Settings Preset Imported"))
 
@@ -8523,6 +8669,45 @@ def _render_application():
     # 如果后台任务正在使用配置，配置层会在任务结束时自动应用并落盘最新值。
     if not generation_submitted:
         _save_runtime_config()
+
+
+@st.fragment(run_every="2s")
+def _task_table_fragment():
+    _render_task_manager_panel(_collect_task_summaries())
+
+
+def _page_library():
+    _page_header(tr("Nav Library"), tr("Library Caption"))
+    with st.container(border=True, key="library_card"):
+        _render_material_manager("library", True)
+
+
+def _page_tasks():
+    _page_header(tr("Nav Tasks"), tr("Tasks Caption"))
+    with st.container(border=True, key="tasks_card"):
+        _task_table_fragment()
+
+
+def _page_settings():
+    _page_header(tr("Nav Settings"), tr("Settings Caption"))
+    with st.container(border=True, key="settings_card"):
+        _render_settings_dialog()
+
+
+def _render_application():
+    """后台管理式布局：左侧导航 + 顶部栏 + 各功能页面。"""
+    pages = {
+        "create": st.Page(_page_create, title=tr("Nav Create"), icon=":material/movie_creation:", url_path="create", default=True),
+        "library": st.Page(_page_library, title=tr("Nav Library"), icon=":material/perm_media:", url_path="library"),
+        "tasks": st.Page(_page_tasks, title=tr("Nav Tasks"), icon=":material/checklist:", url_path="tasks"),
+        "settings": st.Page(_page_settings, title=tr("Nav Settings"), icon=":material/settings:", url_path="settings"),
+    }
+    navigation = st.navigation(list(pages.values()), position="sidebar")
+    goto = st.session_state.pop("nav_goto", None)
+    if goto in pages and pages[goto] is not navigation:
+        st.switch_page(pages[goto])
+    _render_top_bar()
+    navigation.run()
 
 
 _render_application()
